@@ -117,6 +117,14 @@ e logo depois a sugestão sozinha, para você **copiar e colar** no grupo do con
 | `!modo producao` / `!modo teste` | Liberar todos os condomínios / voltar só para a lista |
 | `!ignorar X` / `!ativar X` | Parar ou voltar a monitorar um condomínio |
 | `!outros` · `!vincular N tipo Nome` | Grupos fora do padrão de nome |
+| `!assinatura` · `!assinatura cristiana Ygor` · `!assinatura padrao Luiz` | Quem assina as sugestões |
+| `!base Nome` | O que a IA já sabe do condomínio (fatos aprendidos) |
+| `!fato Nome: texto` | Ensina um fato à mão |
+| `!esquecer N` | Apaga o fato N da última `!base` |
+| `!aprender` | Atualiza a base agora (roda sozinho a cada 3h) |
+| PDF com legenda `!doc Nome Título` | Cadastra regimento, convenção, ata… |
+| `!docs` · `!doc remover N` | Lista ou remove documentos |
+| `!exemplos` | Quantas respostas da equipe já viraram exemplo |
 | `!ajuda` | Mostra os comandos |
 
 ### Quais privados ele analisa
@@ -126,6 +134,17 @@ Se um morador mandar mensagem no privado da IA, a sugestão chega no grupo, mas 
 por você (do seu número) ou, se preferir, pelo celular da IA.
 
 ---
+
+## Como ela aprende (sem responder sozinha)
+- **Exemplos da equipe:** quando alguém da equipe responde um pedido (de preferência citando a mensagem),
+  a pergunta e a resposta viram exemplo. As sugestões passam a imitar o tom e o jeito da equipe.
+- **Base de conhecimento:** a cada 3 horas a IA lê as conversas novas de cada condomínio e guarda fatos duráveis
+  (fornecedores, prazos, decisões, regras, andamentos com data). Nada de dados pessoais ou inadimplência.
+  Confira com `!base Nome`, corrija com `!esquecer N` e ensine com `!fato Nome: texto`.
+- **Documentos:** mande o PDF no grupo de sugestões com a legenda `!doc Nome Título`. As sugestões passam a
+  consultar o texto e citar o artigo.
+
+Ela continua **só sugerindo**: nunca escreve nos grupos dos condomínios.
 
 ## Cuidados
 - **Teste com 3 a 5 condomínios** por uma ou duas semanas antes do `!modo producao`. Observe: notificações

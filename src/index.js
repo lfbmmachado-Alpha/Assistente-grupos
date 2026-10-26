@@ -2,6 +2,7 @@ import express from 'express';
 import { config } from './config.js';
 import { initDb, purgeOld } from './db.js';
 import { handleWebhook } from './handler.js';
+import { initKnowledge, aprender } from './knowledge.js';
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -18,9 +19,15 @@ app.post(['/webhook/:token', '/webhook/:token/:event'], (req, res) => {
 });
 
 await initDb();
+await initKnowledge();
 
 // LGPD: apaga mensagens mais antigas que RETENTION_DAYS, uma vez por dia
 purgeOld(config.retentionDays).catch(() => {});
 setInterval(() => purgeOld(config.retentionDays).catch((e) => console.error('[limpeza]', e.message)), 24 * 3600 * 1000);
+
+// Aprendizado: extrai fatos novos das conversas a cada 3 horas (primeira rodada 10 min após iniciar)
+const rodarAprendizado = () => aprender().catch((e) => console.error('[aprendizado]', e.message));
+setTimeout(rodarAprendizado, 10 * 60 * 1000);
+setInterval(rodarAprendizado, 3 * 3600 * 1000);
 
 app.listen(config.port, () => console.log(`assistente-grupos ouvindo na porta ${config.port}`));

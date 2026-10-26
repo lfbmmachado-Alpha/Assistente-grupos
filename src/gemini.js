@@ -28,8 +28,11 @@ Regras da sugestão de resposta:
     (linha em branco)
     <corpo, em um ou mais parágrafos curtos, separados por linha em branco>
   NÃO escreva despedida nem assinatura ("Att", nome, "Alpha"): o sistema acrescenta sozinho.
-- Use o HISTÓRICO: se ali já houver a informação pedida (dita pela equipe ou pelo síndico),
-  responda com ela. Se não houver, diga que vai verificar e retornar.
+- Use, nesta ordem, BASE DE CONHECIMENTO, DOCUMENTOS e HISTÓRICO: se ali já houver a informação pedida,
+  responda com ela. Ao usar um documento (regimento, convenção), cite o artigo. Se o fato for um andamento com
+  data antiga, diga que vai confirmar a situação atual. Se não houver a informação, diga que vai verificar e retornar.
+- Siga o tom, o tamanho e o jeito de escrever dos EXEMPLOS DE RESPOSTAS DA EQUIPE (quando houver).
+  Copie o estilo, nunca o conteúdo de outro caso.
 - NUNCA invente informação (valores, datas, nomes de fornecedores, horários, artigos de regimento).
   Se faltar dado, a sugestão deve dizer que vai verificar e retornar, ou fazer uma pergunta.
 - Em grupo de moradores, nunca exponha inadimplência, valores devidos por unidade, dados pessoais ou
@@ -56,7 +59,7 @@ function linha(m) {
   return `[${hora}] ${quem}${citado}: ${m.text}`;
 }
 
-export async function analisar({ chat, historico, novas, interno }) {
+export async function analisar({ chat, historico, novas, interno, conhecimento = {} }) {
   const agora = new Date().toLocaleString('pt-BR', {
     timeZone: 'America/Sao_Paulo', weekday: 'long', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
   });
@@ -67,6 +70,25 @@ export async function analisar({ chat, historico, novas, interno }) {
     `\nHISTÓRICO RECENTE:\n${historico.map(linha).join('\n') || '(vazio)'}`,
     `\nMENSAGENS NOVAS PARA AVALIAR:\n${novas.map(linha).join('\n')}`,
   ];
+  const { fatos = [], docs = [], exemplos = [] } = conhecimento;
+  if (fatos.length) {
+    partes.push(`\nBASE DE CONHECIMENTO DO CONDOMÍNIO (aprendida das conversas):\n${fatos.map((f) => `- ${f.fato}`).join('\n')}`);
+  }
+  if (docs.length) {
+    let restante = 150000;
+    const blocos = [];
+    for (const d of docs) {
+      if (restante <= 0) break;
+      const t = d.texto.slice(0, restante);
+      restante -= t.length;
+      blocos.push(`=== ${d.titulo} ===\n${t}`);
+    }
+    partes.push(`\nDOCUMENTOS DO CONDOMÍNIO:\n${blocos.join('\n\n')}`);
+  }
+  if (exemplos.length) {
+    partes.push(`\nEXEMPLOS DE RESPOSTAS DA EQUIPE (para imitar o estilo):\n${exemplos.map((e) =>
+      `PERGUNTA: ${e.pergunta.slice(0, 400)}\nRESPOSTA DA EQUIPE: ${e.resposta.slice(0, 800)}`).join('\n---\n')}`);
+  }
   if (interno?.length) {
     partes.push(`\nCONTEXTO INTERNO (não revelar na sugestão):\n${interno.map((m) => `(${ORIGEM[m.chat_kind]}) ${linha(m)}`).join('\n')}`);
   }
@@ -111,4 +133,43 @@ export async function transcrever(base64, mimetype) {
     return (data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join('') || '').trim();
   }
   throw new Error('Gemini indisponível para transcrição');
+}
+
+// Chamada genérica que devolve JSON (usada pelo aprendizado)
+export async function gerarJSON(sistema, texto) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.geminiModel}:generateContent?key=${config.geminiKey}`;
+  const body = {
+    systemInstruction: { parts: [{ text: sistema }] },
+    contents: [{ role: 'user', parts: [{ text: texto }] }],
+    generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },
+  };
+  for (let tentativa = 1; tentativa <= 3; tentativa++) {
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (res.status === 429 || res.status >= 500) { await new Promise((r) => setTimeout(r, 3000 * tentativa)); continue; }
+    if (!res.ok) throw new Error(`Gemini ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    const data = await res.json();
+    const t = data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join('') || '{}';
+    return JSON.parse(t.replace(/^```json\s*|```$/g, ''));
+  }
+  throw new Error('Gemini indisponível após 3 tentativas');
+}
+
+// Converte um PDF (base64) em texto, preservando artigos e numeração
+export async function lerDocumento(base64, mimetype) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.geminiModel}:generateContent?key=${config.geminiKey}`;
+  const body = {
+    contents: [{ role: 'user', parts: [
+      { inline_data: { mime_type: String(mimetype || 'application/pdf').split(';')[0], data: base64 } },
+      { text: 'Transcreva o conteúdo integral deste documento em texto simples, em português, preservando títulos, capítulos, artigos, parágrafos e incisos com sua numeração. Não resuma e não comente. Omita apenas assinaturas e carimbos.' },
+    ] }],
+    generationConfig: { temperature: 0, maxOutputTokens: 65000 },
+  };
+  for (let tentativa = 1; tentativa <= 3; tentativa++) {
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (res.status === 429 || res.status >= 500) { await new Promise((r) => setTimeout(r, 3000 * tentativa)); continue; }
+    if (!res.ok) throw new Error(`Gemini documento ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    const data = await res.json();
+    return (data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join('') || '').trim();
+  }
+  throw new Error('Gemini indisponível para ler o documento');
 }

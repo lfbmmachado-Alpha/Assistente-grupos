@@ -1,6 +1,10 @@
 import { config } from './config.js';
 import { pool, setSetting, upsertChat, listCondos, listPending, resolveById, stats, getChat } from './db.js';
-import { fetchAllGroups } from './evolution.js';
+import { fetchAllGroups, getMediaBase64 } from './evolution.js';
+import { lerDocumento } from './gemini.js';
+import {
+  aprender, fatosDo, adicionarFato, removerFato, docsDo, salvarDocumento, removerDocumento, listarDocumentos, contarExemplos,
+} from './knowledge.js';
 import { classifyGroup, normalize, unificar } from './groups.js';
 import { getMode, getList, sendToSuggestionGroup, truncate, registrarAdmin, getAssinaturas } from './util.js';
 
@@ -22,6 +26,15 @@ const AJUDA = `🤖 *Comandos* (só neste grupo)
 !status — resumo do sistema
 !assinatura — quem assina as sugestões de cada condomínio
 
+*Conhecimento*
+!base Nome — o que a IA já sabe do condomínio
+!fato Nome: texto — ensina um fato à mão
+!esquecer N — apaga o fato N da última !base
+!aprender — atualiza a base agora (roda sozinho a cada 3h)
+!doc Nome Título — na legenda de um PDF (regimento, convenção…)
+!docs — documentos cadastrados (!doc remover N)
+!exemplos — respostas da equipe já aprendidas
+
 *Ajustes*
 !outros [nome] — grupos que não seguiram o padrão de nome
 !vincular N moradores|sindico|conselho Nome — classifica um grupo de !outros
@@ -29,6 +42,8 @@ const AJUDA = `🤖 *Comandos* (só neste grupo)
 
 let ultimaListaPendentes = [];
 let ultimaListaOutros = [];
+let ultimaListaFatos = [];
+let ultimaListaDocs = [];
 
 export async function handleCommand(msg, suggestionGroup) {
   const texto = msg.text.trim();
@@ -215,6 +230,103 @@ export async function handleCommand(msg, suggestionGroup) {
         `✍️ *Assinaturas*\nPadrão: ${ass.padrao || '(nenhuma, sai só "Alpha Administradora")'}\n\n${linhas.join('\n')}\n\n` +
         `Para mudar:\n!assinatura padrao Luiz\n!assinatura cristiana Ygor\n!assinatura cristiana remover`
       );
+      return true;
+    }
+
+    case 'base': {
+      if (!resto) { await reply('Use: !base NomeDoCondominio'); return true; }
+      const r = await acharCondo(resto);
+      if (r.erro) { await reply(r.erro); return true; }
+      ultimaListaFatos = await fatosDo(r.condo.condo_key);
+      const docs = await docsDo(r.condo.condo_key);
+      if (!ultimaListaFatos.length && !docs.length) {
+        await reply(`🧠 *${r.condo.condo_name}*\nAinda não aprendi nada. A base cresce sozinha com as conversas (a cada 3h) ou com !fato ${r.condo.condo_key}: texto`);
+        return true;
+      }
+      const linhas = ultimaListaFatos.map((f, i) => `${i + 1}. ${f.fato}${f.fonte === 'manual' ? ' ✍️' : ''}`);
+      await reply(
+        `🧠 *${r.condo.condo_name}* (${ultimaListaFatos.length} fatos)\n\n${linhas.join('\n')}` +
+        (docs.length ? `\n\n📄 Documentos: ${docs.map((d) => d.titulo).join(', ')}` : '') +
+        `\n\nPara apagar: !esquecer N · ✍️ = cadastrado à mão`
+      );
+      return true;
+    }
+
+    case 'fato': {
+      const [nome, ...textoParts] = resto.split(':');
+      const texto = textoParts.join(':').trim();
+      if (!nome || !texto) { await reply('Use: !fato NomeDoCondominio: texto do fato\nEx.: !fato cristiana: A dedetização é feita toda primeira quinta do mês.'); return true; }
+      const r = await acharCondo(nome);
+      if (r.erro) { await reply(r.erro); return true; }
+      await adicionarFato(r.condo.condo_key, texto, 'manual');
+      await reply(`✍️ Anotado em *${r.condo.condo_name}*: ${texto}`);
+      return true;
+    }
+
+    case 'esquecer': {
+      const f = ultimaListaFatos[Number(args[0]) - 1];
+      if (!f) { await reply('Use !base Nome primeiro e depois !esquecer N.'); return true; }
+      await removerFato(f.id);
+      await reply(`🗑️ Esquecido: ${f.fato}`);
+      return true;
+    }
+
+    case 'aprender': {
+      await reply('🧠 Lendo as conversas novas…');
+      const r = await aprender({ forcar: true });
+      if (r.ocupado) { await reply('Já estou aprendendo neste momento. Tente em alguns minutos.'); return true; }
+      await reply(`🧠 Pronto: ${r.condominios} condomínio(s) revisado(s)\n➕ ${r.novos} fatos novos · ✏️ ${r.atualizados} atualizados · 🗑️ ${r.removidos} removidos\n\nVeja com !base Nome`);
+      return true;
+    }
+
+    case 'doc': {
+      if (normalize(args[0] || '') === 'remover') {
+        const d = ultimaListaDocs[Number(args[1]) - 1];
+        if (!d) { await reply('Use !docs primeiro e depois !doc remover N.'); return true; }
+        await removerDocumento(d.id);
+        await reply(`🗑️ Documento removido: ${d.titulo}`);
+        return true;
+      }
+      if (!msg.documento) {
+        await reply('Envie o PDF aqui no grupo e escreva na *legenda*: !doc NomeDoCondominio Título\nEx.: !doc cristiana Regimento Interno');
+        return true;
+      }
+      // nome do condomínio = primeira palavra; título = o resto (ou o nome do arquivo)
+      const r = await acharCondo(args[0] || '');
+      if (r.erro) { await reply(r.erro + '\n\nNa legenda: !doc NomeDoCondominio Título'); return true; }
+      const titulo = args.slice(1).join(' ').trim() || msg.documento.nome || 'Documento';
+      await reply(`📄 Lendo "${titulo}" de ${r.condo.condo_name}… pode levar 1 ou 2 minutos.`);
+      try {
+        const midia = await getMediaBase64(msg.key);
+        if (!midia?.base64) throw new Error('não consegui baixar o arquivo');
+        const texto = await lerDocumento(midia.base64, midia.mimetype || msg.documento.mimetype);
+        if (!texto || texto.length < 200) throw new Error('não consegui extrair o texto (o PDF pode ser uma imagem de baixa qualidade)');
+        await salvarDocumento(r.condo.condo_key, titulo, texto);
+        await reply(`✅ "${titulo}" salvo em *${r.condo.condo_name}* (${texto.length >= 1000 ? `${Math.round(texto.length / 1000)} mil` : texto.length} caracteres).\nAs próximas sugestões desse condomínio vão consultar o documento.`);
+      } catch (e) {
+        console.error('[documento]', e.message);
+        await reply(`❌ Não consegui ler o documento: ${e.message}`);
+      }
+      return true;
+    }
+
+    case 'docs': {
+      ultimaListaDocs = await listarDocumentos();
+      if (!ultimaListaDocs.length) { await reply('Nenhum documento ainda. Envie um PDF com a legenda: !doc NomeDoCondominio Título'); return true; }
+      const condos = await listCondos();
+      const nomeDe = (k) => condos.find((c) => c.condo_key === k)?.condo_name || k;
+      await reply(`📄 *Documentos*\n${ultimaListaDocs.map((d, i) => `${i + 1}. ${nomeDe(d.condo_key)}: ${d.titulo} (${d.tamanho >= 1000 ? `${Math.round(d.tamanho / 1000)} mil` : d.tamanho} car.)`).join('\n')}\n\nPara remover: !doc remover N`);
+      return true;
+    }
+
+    case 'exemplos': {
+      const c = await contarExemplos();
+      const condos = await listCondos();
+      const nomeDe = (k) => condos.find((x) => x.condo_key === k)?.condo_name || k || '?';
+      const total = c.reduce((s, x) => s + x.n, 0);
+      await reply(total
+        ? `🎓 *Respostas da equipe aprendidas: ${total}*\n${c.map((x) => `• ${nomeDe(x.condo_key)}: ${x.n}`).join('\n')}\n\nCada vez que a equipe responde um pedido (de preferência citando a mensagem), vira exemplo.`
+        : '🎓 Nenhuma resposta aprendida ainda. Quando a equipe responder um pedido nos grupos (de preferência citando a mensagem), ela vira exemplo.');
       return true;
     }
 

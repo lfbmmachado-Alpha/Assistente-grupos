@@ -23,7 +23,7 @@ export function extrairConteudo(raw) {
   if (m.videoMessage) return { text: m.videoMessage.caption || '[vídeo]', ctx: m.videoMessage.contextInfo };
   if (m.documentMessage) {
     const d = m.documentMessage;
-    return { text: d.caption || `[documento] ${d.fileName || ''}`.trim(), ctx: d.contextInfo };
+    return { text: d.caption || `[documento] ${d.fileName || ''}`.trim(), ctx: d.contextInfo, documento: { mimetype: d.mimetype || '', nome: d.fileName || '' } };
   }
   if (m.audioMessage) return { text: '[áudio]', ctx: m.audioMessage.contextInfo, audio: { mimetype: m.audioMessage.mimetype || 'audio/ogg', segundos: m.audioMessage.seconds || 0 } };
   const poll = m.pollCreationMessage || m.pollCreationMessageV3;
@@ -65,6 +65,7 @@ export function parseMessage(d) {
     quotedText: quoted?.text?.slice(0, 500) || null,
     ts,
     audio: conteudo.audio || null,
+    documento: conteudo.documento || null,
     base64: d.message?.base64 || null, // vem preenchido se "Webhook Base64" estiver ligado
     key,
   };

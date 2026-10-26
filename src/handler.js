@@ -9,6 +9,7 @@ import { classifyGroup, unificar } from './groups.js';
 import { parseMessage } from './parse.js';
 import { analisar, transcrever } from './gemini.js';
 import { handleCommand } from './commands.js';
+import { registrarExemplo, exemplosPara, fatosDo, docsDo } from './knowledge.js';
 
 // ---------- entrada do webhook ----------
 export async function handleWebhook(body) {
@@ -90,6 +91,8 @@ async function processar(d) {
   }
 
   if (msg.equipe) {
+    // A resposta da equipe vira exemplo de estilo (antes de fechar a pendência)
+    await registrarExemplo({ ...chat, condo_key: condoKey }, msg).catch((e) => console.error('[aprendizado]', e.message));
     // A equipe respondeu: fecha a pendência citada, ou todas da conversa privada
     if (msg.quotedId) await resolveById(msg.quotedId);
     if (chat.kind === 'privado') await resolveChat(msg.chatJid);
@@ -172,7 +175,10 @@ export async function executarAnalise(chat, msgs) {
     interno = await messagesSince(internos.map((c) => c.jid), config.internalDays * 24, config.internalMessages);
   }
 
-  const a = await analisar({ chat, historico, novas, interno });
+  const conhecimento = chat.condo_key
+    ? { fatos: await fatosDo(chat.condo_key), docs: await docsDo(chat.condo_key), exemplos: await exemplosPara(chat.condo_key) }
+    : {};
+  const a = await analisar({ chat, historico, novas, interno, conhecimento });
   console.log(`[análise] "${chat.name}" → ${a?.precisa_atencao ? 'AVISAR' : 'não precisa'} (${a?.categoria || '-'}, ${a?.urgencia || '-'}) ${a?.resumo || ''}`);
   if (!a?.precisa_atencao) return;
 
