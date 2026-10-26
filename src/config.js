@@ -26,7 +26,9 @@ export const config = {
   debounceSeconds: Number(process.env.DEBOUNCE_SECONDS || 90), // espera a pessoa terminar de escrever
   pendingHours: Number(process.env.PENDING_HOURS || 48),
   retentionDays: Number(process.env.RETENTION_DAYS || 90),     // LGPD: apaga mensagens antigas
-  contextMessages: Number(process.env.CONTEXT_MESSAGES || 25),
+  contextMessages: Number(process.env.CONTEXT_MESSAGES || 100),        // histórico do próprio grupo
+  internalDays: Number(process.env.INTERNAL_CONTEXT_DAYS || 15),         // grupos de síndico/conselho: quantos dias
+  internalMessages: Number(process.env.INTERNAL_CONTEXT_MESSAGES || 100), // e no máximo quantas mensagens
 
   // Números (ou LIDs) da equipe Alpha. Respostas deles fecham pendências e eles podem usar comandos.
   // Quem envia o primeiro !aqui é cadastrado automaticamente, não precisa estar aqui.

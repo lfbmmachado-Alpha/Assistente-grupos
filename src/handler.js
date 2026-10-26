@@ -157,7 +157,7 @@ export async function executarAnalise(chat, msgs) {
   let interno = [];
   if (chat.condo_key && ['moradores', 'privado'].includes(chat.kind)) {
     const internos = (await chatsOfCondo(chat.condo_key)).filter((c) => ['sindico', 'conselho'].includes(c.kind));
-    interno = await messagesSince(internos.map((c) => c.jid), 72, 30);
+    interno = await messagesSince(internos.map((c) => c.jid), config.internalDays * 24, config.internalMessages);
   }
 
   const a = await analisar({ chat, historico, novas, interno });
