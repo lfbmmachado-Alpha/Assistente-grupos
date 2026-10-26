@@ -64,7 +64,9 @@ async function processar(d) {
       Object.assign(chat, { condo_key: condoKey, condo_name: ref?.condo_name || chat.condo_name });
     }
   }
-  if (!(await permitido(chat, condoKey))) return; // fora do teste / ignorado: nem grava
+  const ok = await permitido(chat, condoKey);
+  console.log(`[recebida] ${chat.kind} "${chat.name || msg.chatJid}" condo=${condoKey || '-'} equipe=${msg.equipe} ${ok ? 'MONITORADO' : 'ignorado'}: ${msg.text.slice(0, 60).replace(/\n/g, ' ')}`);
+  if (!ok) return; // fora do teste / ignorado: nem grava
 
   const nova = await saveMessage({ ...msg, fromMe: msg.equipe, kind: chat.kind });
   if (!nova) return; // duplicada
@@ -84,6 +86,7 @@ async function processar(d) {
   }
 
   agendarAnalise(msg, { ...chat, condo_key: condoKey });
+  console.log(`[fila] "${chat.name}" análise em ${config.debounceSeconds}s`);
 }
 
 async function garantirChat(msg) {
@@ -144,7 +147,10 @@ export async function executarAnalise(chat, msgs) {
   const ultimaTs = new Date(novas[novas.length - 1].ts).getTime();
 
   // Se você já respondeu depois da última mensagem, não notifica
-  if (todas.some((m) => m.from_me && new Date(m.ts).getTime() > ultimaTs)) return;
+  if (todas.some((m) => m.from_me && new Date(m.ts).getTime() > ultimaTs)) {
+    console.log(`[análise] "${chat.name}" → equipe já respondeu, sem aviso`);
+    return;
+  }
 
   const historico = todas.filter((m) => !ids.has(m.id) && new Date(m.ts).getTime() <= ultimaTs);
 
@@ -155,6 +161,7 @@ export async function executarAnalise(chat, msgs) {
   }
 
   const a = await analisar({ chat, historico, novas, interno });
+  console.log(`[análise] "${chat.name}" → ${a?.precisa_atencao ? 'AVISAR' : 'não precisa'} (${a?.categoria || '-'}, ${a?.urgencia || '-'}) ${a?.resumo || ''}`);
   if (!a?.precisa_atencao) return;
 
   await markPending([...ids], a.resumo || null);
