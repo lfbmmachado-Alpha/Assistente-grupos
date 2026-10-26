@@ -3,11 +3,11 @@ import {
   getSetting, getChat, upsertChat, saveMessage, linkContact, contactCondo,
   recentMessages, messagesSince, chatsOfCondo, markPending, resolveById, resolveChat, listCondos,
 } from './db.js';
-import { sentIds, fetchGroupName } from './evolution.js';
+import { sentIds, fetchGroupName, getMediaBase64 } from './evolution.js';
 import { getMode, getList, sendToSuggestionGroup, truncate, isEquipe, formatarSugestao } from './util.js';
 import { classifyGroup, unificar } from './groups.js';
 import { parseMessage } from './parse.js';
-import { analisar } from './gemini.js';
+import { analisar, transcrever } from './gemini.js';
 import { handleCommand } from './commands.js';
 
 // ---------- entrada do webhook ----------
@@ -67,6 +67,18 @@ async function processar(d) {
   const ok = await permitido(chat, condoKey);
   console.log(`[recebida] ${chat.kind} "${chat.name || msg.chatJid}" condo=${condoKey || '-'} equipe=${msg.equipe} ${ok ? 'MONITORADO' : 'ignorado'}: ${msg.text.slice(0, 60).replace(/\n/g, ' ')}`);
   if (!ok) return; // fora do teste / ignorado: nem grava
+
+  if (msg.audio) {
+    try {
+      const midia = msg.base64 ? { base64: msg.base64, mimetype: msg.audio.mimetype } : await getMediaBase64(msg.key);
+      if (!midia?.base64) throw new Error('áudio sem conteúdo');
+      const texto = await transcrever(midia.base64, midia.mimetype || msg.audio.mimetype);
+      if (texto) msg.text = `🎤 (áudio) ${texto}`;
+      console.log(`[áudio] transcrito (${msg.audio.segundos}s): ${msg.text.slice(0, 80)}`);
+    } catch (e) {
+      console.error('[áudio] falha na transcrição:', e.message);
+    }
+  }
 
   const nova = await saveMessage({ ...msg, fromMe: msg.equipe, kind: chat.kind });
   if (!nova) return; // duplicada

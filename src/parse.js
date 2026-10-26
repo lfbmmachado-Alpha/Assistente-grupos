@@ -25,7 +25,7 @@ export function extrairConteudo(raw) {
     const d = m.documentMessage;
     return { text: d.caption || `[documento] ${d.fileName || ''}`.trim(), ctx: d.contextInfo };
   }
-  if (m.audioMessage) return { text: '[áudio]', ctx: m.audioMessage.contextInfo };
+  if (m.audioMessage) return { text: '[áudio]', ctx: m.audioMessage.contextInfo, audio: { mimetype: m.audioMessage.mimetype || 'audio/ogg', segundos: m.audioMessage.seconds || 0 } };
   const poll = m.pollCreationMessage || m.pollCreationMessageV3;
   if (poll) return { text: `[enquete] ${poll.name} — ${(poll.options || []).map((o) => o.optionName).join(' | ')}`, ctx: null };
   return null; // reação, figurinha, exclusão, protocolo: ignora
@@ -64,5 +64,8 @@ export function parseMessage(d) {
     quotedId: ctx?.stanzaId || null,
     quotedText: quoted?.text?.slice(0, 500) || null,
     ts,
+    audio: conteudo.audio || null,
+    base64: d.message?.base64 || null, // vem preenchido se "Webhook Base64" estiver ligado
+    key,
   };
 }

@@ -62,3 +62,15 @@ export async function fetchGroupName(jid) {
     return '';
   }
 }
+
+// Baixa uma mídia recebida (áudio, imagem…) em base64
+export async function getMediaBase64(key) {
+  const res = await fetch(base('/chat/getBase64FromMediaMessage'), {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ message: { key }, convertToMp4: false }),
+  });
+  if (!res.ok) throw new Error(`getBase64FromMediaMessage ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const data = await res.json();
+  return { base64: data?.base64, mimetype: data?.mimetype };
+}

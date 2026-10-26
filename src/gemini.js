@@ -91,3 +91,24 @@ export async function analisar({ chat, historico, novas, interno }) {
   }
   throw new Error('Gemini indisponível após 3 tentativas');
 }
+
+// Transcreve um áudio (base64) com o próprio Gemini
+export async function transcrever(base64, mimetype) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.geminiModel}:generateContent?key=${config.geminiKey}`;
+  const mime = String(mimetype || 'audio/ogg').split(';')[0].trim();
+  const body = {
+    contents: [{ role: 'user', parts: [
+      { inline_data: { mime_type: mime, data: base64 } },
+      { text: 'Transcreva fielmente este áudio de WhatsApp, em português do Brasil. Responda somente com a transcrição, sem comentários. Se não houver fala compreensível, responda: [inaudível]' },
+    ] }],
+    generationConfig: { temperature: 0 },
+  };
+  for (let tentativa = 1; tentativa <= 3; tentativa++) {
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (res.status === 429 || res.status >= 500) { await new Promise((r) => setTimeout(r, 2000 * tentativa)); continue; }
+    if (!res.ok) throw new Error(`Gemini transcrição ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    const data = await res.json();
+    return (data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join('') || '').trim();
+  }
+  throw new Error('Gemini indisponível para transcrição');
+}
