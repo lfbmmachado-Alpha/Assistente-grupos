@@ -36,3 +36,22 @@ export async function registrarAdmin(msg) {
   const ids = [digitos(msg.authorJid), digitos(msg.authorAlt)].filter(Boolean);
   await setSetting('admins', JSON.stringify([...new Set([...admins, ...ids])]));
 }
+
+// Assinaturas: { padrao: "Luiz", "cristiana": "Ygor", ... } (chave = condo_key)
+export async function getAssinaturas() {
+  try { return JSON.parse(await getSetting('assinaturas', '{}')); } catch { return {}; }
+}
+
+// Garante parágrafos separados por linha em branco e acrescenta a assinatura padrão da Alpha
+export async function formatarSugestao(texto, condoKey) {
+  const corpo = String(texto || '')
+    .replace(/\r/g, '')
+    .split(/\n+/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .filter((l) => !/^(att|atenciosamente|abs|abraços?)[.,!]*$/i.test(l) && !/alpha (administradora|condom[ií]nios)/i.test(l))
+    .join('\n\n');
+  const ass = await getAssinaturas();
+  const nome = (condoKey && ass[condoKey]) || ass.padrao || '';
+  return `${corpo}\n\nAtt\n\n${nome ? `${nome}\n` : ''}*Alpha Administradora*`;
+}

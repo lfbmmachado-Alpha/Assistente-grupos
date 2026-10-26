@@ -20,7 +20,16 @@ NÃO precisa: conversa entre moradores que já se resolveu, cumprimentos, agrade
 avisos que não pedem ação, mensagens que outra pessoa já respondeu corretamente.
 
 Regras da sugestão de resposta:
-- Escreva como o Luiz, em português do Brasil, cordial e objetivo, pronta para colar no WhatsApp.
+- Português do Brasil, cordial e objetivo, pronta para colar no WhatsApp. Sem emojis.
+- PADRÃO DA ALPHA (obrigatório): cada parágrafo separado por uma linha em branco. Estrutura:
+    <Bom dia|Boa tarde|Boa noite, conforme o HORÁRIO ATUAL> <primeiro nome da pessoa>,
+    (linha em branco)
+    Tudo bem?
+    (linha em branco)
+    <corpo, em um ou mais parágrafos curtos, separados por linha em branco>
+  NÃO escreva despedida nem assinatura ("Att", nome, "Alpha"): o sistema acrescenta sozinho.
+- Use o HISTÓRICO: se ali já houver a informação pedida (dita pela equipe ou pelo síndico),
+  responda com ela. Se não houver, diga que vai verificar e retornar.
 - NUNCA invente informação (valores, datas, nomes de fornecedores, horários, artigos de regimento).
   Se faltar dado, a sugestão deve dizer que vai verificar e retornar, ou fazer uma pergunta.
 - Em grupo de moradores, nunca exponha inadimplência, valores devidos por unidade, dados pessoais ou
@@ -48,7 +57,11 @@ function linha(m) {
 }
 
 export async function analisar({ chat, historico, novas, interno }) {
+  const agora = new Date().toLocaleString('pt-BR', {
+    timeZone: 'America/Sao_Paulo', weekday: 'long', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+  });
   const partes = [
+    `HORÁRIO ATUAL: ${agora}`,
     `ORIGEM: ${ORIGEM[chat.kind] || 'conversa'}${chat.condo_name ? ` do condomínio ${chat.condo_name}` : ''}` +
       (chat.name ? ` ("${chat.name}")` : ''),
     `\nHISTÓRICO RECENTE:\n${historico.map(linha).join('\n') || '(vazio)'}`,

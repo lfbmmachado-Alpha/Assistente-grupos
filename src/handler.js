@@ -4,7 +4,7 @@ import {
   recentMessages, messagesSince, chatsOfCondo, markPending, resolveById, resolveChat, listCondos,
 } from './db.js';
 import { sentIds, fetchGroupName } from './evolution.js';
-import { getMode, getList, sendToSuggestionGroup, truncate, isEquipe } from './util.js';
+import { getMode, getList, sendToSuggestionGroup, truncate, isEquipe, formatarSugestao } from './util.js';
 import { classifyGroup, unificar } from './groups.js';
 import { parseMessage } from './parse.js';
 import { analisar } from './gemini.js';
@@ -188,5 +188,5 @@ async function notificar(chat, novas, a) {
     (a.sugestao ? '\n\n💬 Sugestão na próxima mensagem 👇' : '');
 
   await sendToSuggestionGroup(cabecalho);
-  if (a.sugestao) await sendToSuggestionGroup(a.sugestao); // separada para copiar fácil
+  if (a.sugestao) await sendToSuggestionGroup(await formatarSugestao(a.sugestao, chat.condo_key)); // separada para copiar fácil
 }

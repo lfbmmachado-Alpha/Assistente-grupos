@@ -2,7 +2,7 @@ import { config } from './config.js';
 import { pool, setSetting, upsertChat, listCondos, listPending, resolveById, stats, getChat } from './db.js';
 import { fetchAllGroups } from './evolution.js';
 import { classifyGroup, normalize, unificar } from './groups.js';
-import { getMode, getList, sendToSuggestionGroup, truncate, registrarAdmin } from './util.js';
+import { getMode, getList, sendToSuggestionGroup, truncate, registrarAdmin, getAssinaturas } from './util.js';
 
 const ICONES = { moradores: '👥', sindico: '🧑‍💼', conselho: '📊' };
 
@@ -20,6 +20,7 @@ const AJUDA = `🤖 *Comandos* (só neste grupo)
 !pendentes — o que está sem resposta
 !ok N — marca a pendência N como resolvida (!ok todos)
 !status — resumo do sistema
+!assinatura — quem assina as sugestões de cada condomínio
 
 *Ajustes*
 !outros [nome] — grupos que não seguiram o padrão de nome
@@ -185,6 +186,35 @@ export async function handleCommand(msg, suggestionGroup) {
       if (!itens.length) { await reply('Use !pendentes primeiro e depois !ok N (ou !ok todos).'); return true; }
       for (const it of itens) for (const id of it.ids) await resolveById(id);
       await reply(`✅ ${itens.length} pendência(s) marcada(s) como resolvida(s).`);
+      return true;
+    }
+
+    case 'assinatura':
+    case 'assinaturas': {
+      const ass = await getAssinaturas();
+      const alvo = normalize(args[0] || '');
+      const nome = args.slice(1).join(' ').trim();
+      if (alvo && nome) {
+        if (alvo === 'padrao') {
+          ass.padrao = nome;
+          await setSetting('assinaturas', JSON.stringify(ass));
+          await reply(`✍️ Assinatura padrão: *${nome}*`);
+          return true;
+        }
+        const r = await acharCondo(args[0]);
+        if (r.erro) { await reply(r.erro + '\n\nUse: !assinatura NomeDoCondominio NomeDaPessoa'); return true; }
+        if (normalize(nome) === 'remover') delete ass[r.condo.condo_key];
+        else ass[r.condo.condo_key] = nome;
+        await setSetting('assinaturas', JSON.stringify(ass));
+        await reply(normalize(nome) === 'remover' ? `➖ ${r.condo.condo_name} volta a usar a assinatura padrão` : `✍️ ${r.condo.condo_name}: *${nome}*`);
+        return true;
+      }
+      const condos = await listCondos();
+      const linhas = condos.map((c) => `• ${c.condo_name}: ${ass[c.condo_key] || `_${ass.padrao || 'sem nome'}_ (padrão)`}`);
+      await reply(
+        `✍️ *Assinaturas*\nPadrão: ${ass.padrao || '(nenhuma, sai só "Alpha Administradora")'}\n\n${linhas.join('\n')}\n\n` +
+        `Para mudar:\n!assinatura padrao Luiz\n!assinatura cristiana Ygor\n!assinatura cristiana remover`
+      );
       return true;
     }
 
