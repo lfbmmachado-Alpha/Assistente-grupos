@@ -1,7 +1,7 @@
 import { config } from './config.js';
 import { pool, setSetting, upsertChat, listCondos, listPending, resolveById, stats, getChat } from './db.js';
 import { fetchAllGroups } from './evolution.js';
-import { classifyGroup, normalize } from './groups.js';
+import { classifyGroup, normalize, unificar } from './groups.js';
 import { getMode, getList, sendToSuggestionGroup, truncate, registrarAdmin } from './util.js';
 
 const ICONES = { moradores: '👥', sindico: '🧑‍💼', conselho: '📊' };
@@ -60,18 +60,44 @@ export async function handleCommand(msg, suggestionGroup) {
 
     case 'sincronizar': {
       await reply('🔄 Lendo seus grupos…');
-      const grupos = await fetchAllGroups();
+      const grupos = (await fetchAllGroups()).filter((g) => g.jid !== suggestionGroup);
       const cont = { moradores: 0, sindico: 0, conselho: 0, outro: 0 };
+      const trocas = new Map(); // chave antiga -> chave nova
+
+      // 1º moradores (eles dão o nome do condomínio), depois síndico/conselho se ligam a eles
+      const itens = [];
       for (const g of grupos) {
-        if (g.jid === suggestionGroup) continue;
         const atual = await getChat(g.jid);
-        // não sobrescreve um grupo que você vinculou à mão
         const cls = atual?.manual
           ? { kind: atual.kind, condo_key: atual.condo_key, condo_name: atual.condo_name }
           : classifyGroup(g.name);
+        itens.push({ g, atual, cls });
+      }
+      const ordem = { moradores: 0, sindico: 1, conselho: 1, outro: 2 };
+      itens.sort((a, b) => ordem[a.cls.kind] - ordem[b.cls.kind]);
+
+      const conhecidos = [];
+      for (const { g, atual, cls: base } of itens) {
+        const cls = atual?.manual ? base : unificar(base, conhecidos);
+        if (cls.condo_key && !conhecidos.some((c) => c.condo_key === cls.condo_key)) conhecidos.push(cls);
+        if (atual?.condo_key && cls.condo_key && atual.condo_key !== cls.condo_key) trocas.set(atual.condo_key, cls.condo_key);
         await upsertChat({ jid: g.jid, name: g.name, ...cls });
+        if (cls.condo_name) await pool.query('UPDATE chats SET condo_name = $2 WHERE jid = $1', [g.jid, cls.condo_name]);
         cont[cls.kind] = (cont[cls.kind] || 0) + 1;
       }
+
+      // Mantém a lista de teste e de ignorados quando a chave de um condomínio muda
+      for (const chave of ['test_condos', 'ignored_condos']) {
+        const lista = await getList(chave);
+        const nova = [...new Set(lista.map((k) => trocas.get(k) || k))];
+        if (JSON.stringify(nova) !== JSON.stringify(lista)) await setSetting(chave, JSON.stringify(nova));
+      }
+      // Privados já ligados a uma chave antiga
+      for (const [de, para] of trocas) {
+        await pool.query('UPDATE contacts SET condo_key = $2 WHERE condo_key = $1', [de, para]);
+        await pool.query(`UPDATE chats SET condo_key = $2 WHERE condo_key = $1 AND kind = 'privado'`, [de, para]);
+      }
+
       const condos = await listCondos();
       await reply(
         `✅ ${grupos.length} grupos lidos\n` +

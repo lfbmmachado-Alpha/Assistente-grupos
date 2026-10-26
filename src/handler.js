@@ -1,11 +1,11 @@
 import { config } from './config.js';
 import {
   getSetting, getChat, upsertChat, saveMessage, linkContact, contactCondo,
-  recentMessages, messagesSince, chatsOfCondo, markPending, resolveById, resolveChat,
+  recentMessages, messagesSince, chatsOfCondo, markPending, resolveById, resolveChat, listCondos,
 } from './db.js';
 import { sentIds, fetchGroupName } from './evolution.js';
 import { getMode, getList, sendToSuggestionGroup, truncate, isEquipe } from './util.js';
-import { classifyGroup } from './groups.js';
+import { classifyGroup, unificar } from './groups.js';
 import { parseMessage } from './parse.js';
 import { analisar } from './gemini.js';
 import { handleCommand } from './commands.js';
@@ -91,7 +91,8 @@ async function garantirChat(msg) {
   if (msg.isGroup) {
     if (!chat) {
       const name = await fetchGroupName(msg.chatJid);
-      await upsertChat({ jid: msg.chatJid, name, ...classifyGroup(name) });
+      const existentes = (await listCondos()).map((c) => ({ condo_key: c.condo_key, condo_name: c.condo_name }));
+      await upsertChat({ jid: msg.chatJid, name, ...unificar(classifyGroup(name), existentes) });
       chat = await getChat(msg.chatJid);
     }
   } else if (!chat || (!msg.equipe && msg.authorName && chat.name !== msg.authorName)) {
