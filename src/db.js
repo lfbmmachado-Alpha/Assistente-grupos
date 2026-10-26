@@ -1,13 +1,12 @@
 import pg from 'pg';
 import { config } from './config.js';
-import { classifyGroupName } from './classifier.js';
 
 export const pool = new pg.Pool({
   connectionString: config.databaseUrl,
-  ssl: config.pgSsl ? { rejectUnauthorized: false } : false,
+  ssl: /railway\.internal|localhost|127\.0\.0\.1/.test(config.databaseUrl) ? false : { rejectUnauthorized: false },
 });
 
-const q = (text, params) => pool.query(text, params);
+const q = (sql, params) => pool.query(sql, params);
 
 export async function initDb() {
   await q(`
@@ -16,57 +15,58 @@ export async function initDb() {
       value TEXT
     );
 
-    -- Grupos e conversas privadas
     CREATE TABLE IF NOT EXISTS chats (
       jid        TEXT PRIMARY KEY,
-      jid_alt    TEXT,
-      is_group   BOOLEAN NOT NULL,
       name       TEXT,
-      kind       TEXT NOT NULL,              -- moradores | sindico | conselho | privado | outro
-      condo_key  TEXT,                       -- chave normalizada que liga os grupos do mesmo condomínio
+      kind       TEXT,          -- moradores | sindico | conselho | privado | outro
+      condo_key  TEXT,
       condo_name TEXT,
-      manual     BOOLEAN NOT NULL DEFAULT FALSE, -- true = vínculo/tipo definido por você (não é sobrescrito)
-      enabled    BOOLEAN NOT NULL DEFAULT TRUE,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      enabled    BOOLEAN DEFAULT TRUE,
+      updated_at TIMESTAMPTZ DEFAULT now()
     );
-    CREATE INDEX IF NOT EXISTS chats_condo ON chats (condo_key);
 
-    CREATE TABLE IF NOT EXISTS chat_messages (
-      chat_jid       TEXT NOT NULL REFERENCES chats(jid) ON DELETE CASCADE,
-      id             TEXT NOT NULL,
-      author_jid     TEXT,
-      author_jid_alt TEXT,
-      author_name    TEXT,
-      from_me        BOOLEAN NOT NULL DEFAULT FALSE,
-      text           TEXT NOT NULL,
-      quoted_id      TEXT,
-      ts             TIMESTAMPTZ NOT NULL,
-      category       TEXT,
-      urgency        TEXT,
-      needs_response BOOLEAN,
-      summary        TEXT,
-      suggestion     TEXT,
-      internal_note  TEXT,
-      answered       BOOLEAN NOT NULL DEFAULT FALSE,
-      analyzed_at    TIMESTAMPTZ,
-      PRIMARY KEY (chat_jid, id)
+    -- Liga uma pessoa (número ou LID) ao condomínio onde ela aparece no grupo de moradores
+    CREATE TABLE IF NOT EXISTS contacts (
+      jid       TEXT PRIMARY KEY,
+      name      TEXT,
+      condo_key TEXT,
+      seen_at   TIMESTAMPTZ DEFAULT now()
     );
-    CREATE INDEX IF NOT EXISTS cm_chat_ts  ON chat_messages (chat_jid, ts DESC);
-    CREATE INDEX IF NOT EXISTS cm_pending  ON chat_messages (needs_response, answered, ts DESC);
-    CREATE INDEX IF NOT EXISTS cm_author   ON chat_messages (author_jid);
-    CREATE INDEX IF NOT EXISTS cm_author2  ON chat_messages (author_jid_alt);
+
+    CREATE TABLE IF NOT EXISTS messages (
+      id          TEXT PRIMARY KEY,
+      chat_jid    TEXT NOT NULL,
+      ts          TIMESTAMPTZ NOT NULL,
+      author_jid  TEXT,
+      author_name TEXT,
+      from_me     BOOLEAN DEFAULT FALSE,
+      kind        TEXT,
+      text        TEXT,
+      quoted_id   TEXT,
+      quoted_text TEXT,
+      status      TEXT,         -- NULL | pendente | respondida | descartada
+      summary     TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_msg_chat_ts ON messages (chat_jid, ts DESC);
+    CREATE INDEX IF NOT EXISTS idx_msg_status  ON messages (status, ts DESC);
+    ALTER TABLE chats ADD COLUMN IF NOT EXISTS manual BOOLEAN DEFAULT FALSE;
+
+    -- Compatibilidade com o banco da versão de 08/10, se ele for reaproveitado
+    DO $$ BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'chats' AND column_name = 'is_group') THEN
+        ALTER TABLE chats ALTER COLUMN is_group DROP NOT NULL;
+      END IF;
+    END $$;
   `);
 }
 
 // ---------- settings ----------
-export async function getSetting(key) {
-  const { rows } = await q('SELECT value FROM settings WHERE key = $1', [key]);
-  return rows[0]?.value ?? null;
+export async function getSetting(key, fallback = null) {
+  const r = await q('SELECT value FROM settings WHERE key = $1', [key]);
+  return r.rows[0]?.value ?? fallback;
 }
-
-export function setSetting(key, value) {
-  return q(
+export async function setSetting(key, value) {
+  await q(
     `INSERT INTO settings (key, value) VALUES ($1, $2)
      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
     [key, value]
@@ -75,171 +75,120 @@ export function setSetting(key, value) {
 
 // ---------- chats ----------
 export async function getChat(jid) {
-  const { rows } = await q('SELECT * FROM chats WHERE jid = $1', [jid]);
-  return rows[0] || null;
+  return (await q('SELECT * FROM chats WHERE jid = $1', [jid])).rows[0] || null;
 }
-
-/** Cria/atualiza um grupo, classificando pelo nome (respeita vínculos manuais). */
-export async function upsertGroupChat(jid, name) {
-  const c = name ? classifyGroupName(name) : { kind: 'moradores', condoKey: null, condoName: null };
-  const { rows } = await q(
-    `INSERT INTO chats (jid, is_group, name, kind, condo_key, condo_name)
-     VALUES ($1, TRUE, $2, $3, $4, $5)
+export async function upsertChat({ jid, name, kind, condo_key, condo_name }) {
+  await q(
+    `INSERT INTO chats (jid, name, kind, condo_key, condo_name)
+     VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (jid) DO UPDATE SET
-       name       = COALESCE(EXCLUDED.name, chats.name),
-       kind       = CASE WHEN chats.manual OR EXCLUDED.name IS NULL THEN chats.kind       ELSE EXCLUDED.kind       END,
-       condo_key  = CASE WHEN chats.manual OR EXCLUDED.name IS NULL THEN chats.condo_key  ELSE EXCLUDED.condo_key  END,
-       condo_name = CASE WHEN chats.manual OR EXCLUDED.name IS NULL THEN chats.condo_name ELSE EXCLUDED.condo_name END,
-       updated_at = now()
-     RETURNING *`,
-    [jid, name, c.kind, c.condoKey, c.condoName]
-  );
-  return rows[0];
-}
-
-export async function upsertPrivateChat(jid, jidAlt, name) {
-  const { rows } = await q(
-    `INSERT INTO chats (jid, jid_alt, is_group, name, kind)
-     VALUES ($1, $2, FALSE, $3, 'privado')
-     ON CONFLICT (jid) DO UPDATE SET
-       name    = COALESCE(EXCLUDED.name, chats.name),
-       jid_alt = COALESCE(EXCLUDED.jid_alt, chats.jid_alt),
-       updated_at = now()
-     RETURNING *`,
-    [jid, jidAlt, name]
-  );
-  return rows[0];
-}
-
-export async function listChats(isGroup) {
-  const { rows } = await q(
-    'SELECT * FROM chats WHERE is_group = $1 ORDER BY name NULLS LAST, jid',
-    [isGroup]
-  );
-  return rows;
-}
-
-export function setChatCondo(jid, condoKey, condoName, manual) {
-  return q(
-    `UPDATE chats SET condo_key = $2, condo_name = $3, manual = manual OR $4, updated_at = now() WHERE jid = $1`,
-    [jid, condoKey, condoName, manual]
+       name = COALESCE(EXCLUDED.name, chats.name),
+       kind = COALESCE(EXCLUDED.kind, chats.kind),
+       condo_key  = COALESCE(EXCLUDED.condo_key, chats.condo_key),
+       condo_name = COALESCE(EXCLUDED.condo_name, chats.condo_name),
+       updated_at = now()`,
+    [jid, name || null, kind || null, condo_key || null, condo_name || null]
   );
 }
-
-export function setChatKind(jid, kind) {
-  return q('UPDATE chats SET kind = $2, manual = TRUE, updated_at = now() WHERE jid = $1', [jid, kind]);
+export async function setCondoEnabled(condo_key, enabled) {
+  await q('UPDATE chats SET enabled = $2 WHERE condo_key = $1', [condo_key, enabled]);
 }
-
-export function setChatEnabled(jid, enabled) {
-  return q('UPDATE chats SET enabled = $2 WHERE jid = $1', [jid, enabled]);
-}
-
 export async function listCondos() {
-  const { rows } = await q(
-    `SELECT condo_key,
-            (array_agg(condo_name ORDER BY (kind = 'moradores') DESC))[1] AS condo_name,
-            array_agg(DISTINCT kind) AS kinds
-     FROM chats
-     WHERE is_group AND condo_key IS NOT NULL
-     GROUP BY condo_key
-     ORDER BY 2`
-  );
-  return rows;
+  const r = await q(`
+    SELECT condo_key, MIN(condo_name) AS condo_name,
+           ARRAY_AGG(DISTINCT kind) AS kinds,
+           BOOL_AND(enabled) AS enabled
+    FROM chats
+    WHERE condo_key IS NOT NULL AND kind IN ('moradores','sindico','conselho')
+    GROUP BY condo_key
+    ORDER BY MIN(condo_name)`);
+  return r.rows;
+}
+export async function chatsOfCondo(condo_key) {
+  return (await q('SELECT * FROM chats WHERE condo_key = $1', [condo_key])).rows;
 }
 
-/** Para conversa privada: descobre o condomínio pelo grupo onde a pessoa escreveu por último. */
-export async function inferCondo(jids) {
-  const { rows } = await q(
-    `SELECT c.condo_key, c.condo_name
-     FROM chat_messages m JOIN chats c ON c.jid = m.chat_jid
-     WHERE c.is_group AND c.condo_key IS NOT NULL AND c.kind = 'moradores'
-       AND (m.author_jid = ANY($1) OR m.author_jid_alt = ANY($1))
-     ORDER BY m.ts DESC LIMIT 1`,
-    [jids]
+// ---------- contatos ----------
+export async function linkContact(jid, name, condo_key) {
+  if (!jid || !condo_key) return;
+  await q(
+    `INSERT INTO contacts (jid, name, condo_key) VALUES ($1, $2, $3)
+     ON CONFLICT (jid) DO UPDATE SET name = COALESCE(EXCLUDED.name, contacts.name),
+       condo_key = EXCLUDED.condo_key, seen_at = now()`,
+    [jid, name || null, condo_key]
   );
-  return rows[0] || null;
+}
+export async function contactCondo(jids) {
+  const lista = jids.filter(Boolean);
+  if (!lista.length) return null;
+  const r = await q('SELECT condo_key FROM contacts WHERE jid = ANY($1) ORDER BY seen_at DESC LIMIT 1', [lista]);
+  return r.rows[0]?.condo_key || null;
 }
 
 // ---------- mensagens ----------
-/** Retorna true se a mensagem é nova (evita processar duplicadas do webhook). */
 export async function saveMessage(m) {
   const r = await q(
-    `INSERT INTO chat_messages (chat_jid, id, author_jid, author_jid_alt, author_name, from_me, text, quoted_id, ts)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-     ON CONFLICT DO NOTHING`,
-    [m.chatJid, m.id, m.authorJid, m.authorJidAlt, m.authorName, m.fromMe, m.text, m.quotedId, m.ts]
+    `INSERT INTO messages (id, chat_jid, ts, author_jid, author_name, from_me, kind, text, quoted_id, quoted_text)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+     ON CONFLICT (id) DO NOTHING`,
+    [m.id, m.chatJid, m.ts, m.authorJid, m.authorName, m.fromMe, m.kind, m.text, m.quotedId, m.quotedText]
   );
-  return r.rowCount === 1;
+  return r.rowCount === 1; // false = duplicada
 }
-
-export async function getHistory(chatJid, beforeTs, limit) {
-  const { rows } = await q(
-    `SELECT author_name, from_me, text, ts FROM chat_messages
-     WHERE chat_jid = $1 AND ts < $2
-     ORDER BY ts DESC LIMIT $3`,
-    [chatJid, beforeTs, limit]
+export async function recentMessages(chatJid, limit) {
+  const r = await q(
+    `SELECT * FROM (SELECT * FROM messages WHERE chat_jid = $1 ORDER BY ts DESC LIMIT $2) t ORDER BY ts ASC`,
+    [chatJid, limit]
   );
-  return rows.reverse();
+  return r.rows;
 }
-
-/** Mensagens recentes dos OUTROS grupos do mesmo condomínio. */
-export async function getRelated(condoKey, excludeJid, kinds, beforeTs, days, limit) {
-  if (!condoKey || !kinds.length) return [];
-  const { rows } = await q(
-    `SELECT m.author_name, m.from_me, m.text, m.ts, c.kind, c.name AS chat_name
-     FROM chat_messages m JOIN chats c ON c.jid = m.chat_jid
-     WHERE c.condo_key = $1 AND c.jid <> $2 AND c.is_group AND c.kind = ANY($3)
-       AND m.ts < $4::timestamptz AND m.ts > $4::timestamptz - make_interval(days => $5::int)
-     ORDER BY m.ts DESC LIMIT $6`,
-    [condoKey, excludeJid, kinds, beforeTs, days, limit]
+export async function messagesSince(chatJids, sinceHours, limit) {
+  if (!chatJids.length) return [];
+  const r = await q(
+    `SELECT m.*, c.kind AS chat_kind FROM messages m JOIN chats c ON c.jid = m.chat_jid
+     WHERE m.chat_jid = ANY($1) AND m.ts > now() - ($2 || ' hours')::interval
+     ORDER BY m.ts DESC LIMIT $3`,
+    [chatJids, String(sinceHours), limit]
   );
-  return rows.reverse();
+  return r.rows.reverse();
 }
-
-export function saveAnalysis(chatJid, id, a) {
-  return q(
-    `UPDATE chat_messages
-     SET category = $3, urgency = $4, needs_response = $5, summary = $6,
-         suggestion = $7, internal_note = $8, analyzed_at = now()
-     WHERE chat_jid = $1 AND id = $2`,
-    [chatJid, id, a.categoria, a.urgencia, a.precisa_resposta, a.resumo, a.sugestao, a.nota_interna]
+export async function markPending(ids, summary) {
+  await q(`UPDATE messages SET status = 'pendente', summary = $2 WHERE id = ANY($1)`, [ids, summary]);
+}
+// Fecha a mensagem citada e as outras da mesma pendência (mesma conversa e mesmo resumo)
+export async function resolveById(id) {
+  const r = await q(
+    `UPDATE messages m SET status = 'respondida'
+     FROM messages alvo
+     WHERE alvo.id = $1 AND m.status = 'pendente' AND m.chat_jid = alvo.chat_jid
+       AND (m.id = alvo.id OR (alvo.summary IS NOT NULL AND m.summary = alvo.summary))`,
+    [id]
   );
+  return r.rowCount;
 }
-
-export async function isAnswered(chatJid, id) {
-  const { rows } = await q('SELECT answered FROM chat_messages WHERE chat_jid = $1 AND id = $2', [chatJid, id]);
-  return rows[0]?.answered === true;
+export async function resolveChat(chatJid) {
+  const r = await q(`UPDATE messages SET status = 'respondida' WHERE chat_jid = $1 AND status = 'pendente'`, [chatJid]);
+  return r.rowCount;
 }
-
-/**
- * Quando você responde:
- * - se citou uma mensagem, marca só ela como respondida;
- * - senão, marca as pendências das últimas 48h daquele chat.
- */
-export function markAnswered(chatJid, ts, quotedId) {
-  if (quotedId) {
-    return q('UPDATE chat_messages SET answered = TRUE WHERE chat_jid = $1 AND id = $2', [chatJid, quotedId]);
-  }
-  return q(
-    `UPDATE chat_messages SET answered = TRUE
-     WHERE chat_jid = $1 AND NOT answered AND NOT from_me
-       AND ts <= $2::timestamptz AND ts > $2::timestamptz - interval '48 hours'`,
-    [chatJid, ts]
-  );
-}
-
 export async function listPending(hours) {
-  const { rows } = await q(
-    `SELECT m.*, c.name AS chat_name, c.kind, c.condo_name
-     FROM chat_messages m JOIN chats c ON c.jid = m.chat_jid
-     WHERE m.needs_response AND NOT m.answered AND c.enabled
-       AND m.ts > now() - make_interval(hours => $1::int)
-     ORDER BY COALESCE(c.condo_name, c.name), c.kind, m.ts`,
-    [hours]
+  const r = await q(
+    `SELECT m.*, c.name AS chat_name, c.condo_name, c.kind AS chat_kind
+     FROM messages m LEFT JOIN chats c ON c.jid = m.chat_jid
+     WHERE m.status = 'pendente' AND m.ts > now() - ($1 || ' hours')::interval
+     ORDER BY c.condo_name NULLS LAST, m.ts`,
+    [String(hours)]
   );
-  return rows;
+  return r.rows;
 }
-
-export function purgeOld(days) {
-  return q('DELETE FROM chat_messages WHERE ts < now() - make_interval(days => $1::int)', [days]);
+export async function stats() {
+  const r = await q(`
+    SELECT
+      (SELECT COUNT(*) FROM messages WHERE ts > now() - interval '24 hours') AS msgs_24h,
+      (SELECT COUNT(*) FROM messages WHERE status = 'pendente') AS pendentes,
+      (SELECT COUNT(*) FROM chats WHERE kind <> 'privado') AS grupos`);
+  return r.rows[0];
+}
+export async function purgeOld(days) {
+  const r = await q(`DELETE FROM messages WHERE ts < now() - ($1 || ' days')::interval`, [String(days)]);
+  if (r.rowCount) console.log(`[limpeza] ${r.rowCount} mensagens antigas removidas`);
 }

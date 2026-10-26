@@ -1,96 +1,147 @@
-# assistente-grupos
+# Assistente de grupos — guia do zero
 
-Conecta no seu número pessoal (como aparelho conectado, igual ao WhatsApp Web), lê **grupos e conversas privadas**,
-guarda as mensagens, identifica o condomínio de cada grupo, classifica com o Gemini e manda **somente no seu grupo
-de sugestões** tudo que precisa de resposta, com uma sugestão pronta para copiar.
+O que ele faz: usa um **número próprio da IA**, que você adiciona nos grupos dos condomínios.
+Ele lê os grupos (moradores, síndico, conselho) e as mensagens que moradores mandarem no privado **para esse número**,
+e manda para um **grupo de sugestões** (você + o número da IA) um resumo do que precisa de resposta,
+com uma sugestão pronta para copiar.
 
-O serviço **não tem nenhuma função para enviar mensagem a outro lugar**: a única saída é `sendToSuggestionGroup`.
+Ele **nunca escreve** nos grupos dos condomínios nem nos privados. Só escreve no grupo de sugestões.
+Você responde normalmente, do seu número pessoal.
 
-## Como os grupos são ligados ao condomínio
-O tipo e o condomínio saem do nome do grupo (acentos, maiúsculas e prefixos são ignorados):
+---
 
-| Nome do grupo | Tipo | Condomínio |
-|---|---|---|
-| Condomínio Belinha Ferrari | 👥 Moradores | Belinha Ferrari |
-| Sindico-Belinha ferrari | 🧑‍💼 Síndico | Belinha Ferrari |
-| Sind-Serra do capivari | 🧑‍💼 Síndico | Serra do Capivari |
-| Conselho-Serra do Capivari | 📊 Conselho | Serra do Capivari |
-| Conselho fiscal | 📊 Conselho | ⚠️ sem condomínio → `!vincular` |
+## Passo 1 — Colocar o código no GitHub
+1. No repositório `condo-bot`, crie uma branch nova chamada `assistente-grupos`.
+2. Suba esta pasta inteira nela (package.json, src/, README.md, .env.example, .gitignore).
 
-Na análise, os grupos do mesmo condomínio se ajudam:
-- mensagem no grupo de **moradores** → a IA vê o que foi falado nos grupos de síndico/conselho (30 dias),
-  **sem revelar** isso na sugestão; o que for útil aparece como 🔎 nota interna só para você;
-- mensagem no grupo do **síndico/conselho** → a IA vê o que os moradores estão falando (14 dias);
-- **privado** → o condomínio é descoberto pelo grupo de moradores onde a pessoa escreve, e o grupo entra como contexto.
+> Alternativa: criar um repositório novo só para ele. Funciona igual.
 
-## 1. Railway
-1. Serviço novo a partir deste repositório (ou branch separada, se ficar no repo do condo-bot).
-2. Postgres no projeto; URL interna em `DATABASE_URL`.
-3. Variáveis do `.env.example`.
+## Passo 2 — Criar o serviço no Railway
+1. No mesmo projeto do condo-bot: **New → GitHub Repo** → escolha o repositório e a branch `assistente-grupos`.
+2. **New → Database → PostgreSQL** (cria o banco).
+3. No serviço novo, aba **Variables**, preencha (modelo no `.env.example`):
 
-## 2. Evolution API (instância nova no seu número)
-Conecte pelo QR Code em *WhatsApp → Aparelhos conectados*. Configurações importantes no número pessoal:
-`readMessages: false` (não marca como lida), `alwaysOnline: false` (não fica online o tempo todo),
-`groupsIgnore: false` (recebe grupos).
+| Variável | O que colocar |
+|---|---|
+| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` (o Railway preenche sozinho) |
+| `EVOLUTION_API_URL` | a mesma URL da Evolution que o condo-bot usa |
+| `EVOLUTION_API_KEY` | a mesma apikey global |
+| `EVOLUTION_INSTANCE` | `assistente-ia` (o nome da instância do passo 3) |
+| `WEBHOOK_TOKEN` | uma senha longa qualquer, inventada por você |
+| `GEMINI_API_KEY` | a mesma chave do Gemini do condo-bot |
+| `EQUIPE_NUMEROS` | *(opcional)* números de outras pessoas da Alpha, com DDI e DDD, separados por vírgula. As respostas delas também fecham pendências. Você não precisa estar aqui. |
 
-```bash
-curl -X POST "$EVOLUTION_URL/settings/set/luiz-pessoal" \
-  -H "apikey: $EVOLUTION_API_KEY" -H "Content-Type: application/json" \
-  -d '{"rejectCall":false,"groupsIgnore":false,"alwaysOnline":false,"readMessages":false,"readStatus":false,"syncFullHistory":false}'
+4. Aba **Settings → Networking → Generate Domain**. Anote o endereço (ex.: `assistente-grupos-production.up.railway.app`).
+5. Abra esse endereço no navegador. Deve aparecer **assistente-grupos ok**.
 
-curl -X POST "$EVOLUTION_URL/webhook/set/luiz-pessoal" \
-  -H "apikey: $EVOLUTION_API_KEY" -H "Content-Type: application/json" \
-  -d '{"webhook":{"enabled":true,"url":"https://SEU-APP.up.railway.app/webhook/SEU_WEBHOOK_TOKEN","byEvents":false,"base64":false,"events":["MESSAGES_UPSERT","GROUPS_UPSERT","GROUP_UPDATE"]}}'
+## Passo 3 — Conectar o número da IA na Evolution
+1. Coloque o chip num celular, instale o **WhatsApp Business** e ative o número.
+   Em perfil, use um nome claro, como **"Alpha Condomínios · Assistente"**, e a logo da Alpha.
+2. **Aqueça o número**: use normalmente por 3 a 5 dias (algumas conversas, entrar em 1 ou 2 grupos)
+   antes de colocar em muitos grupos. Número novo que entra em dezenas de grupos no primeiro dia é banido com facilidade.
+3. No painel da Evolution, crie uma **instância nova** chamada `assistente-ia`.
+4. Gere o QR Code e leia com o celular da IA: **WhatsApp → Aparelhos conectados → Conectar aparelho**.
+5. Nas **configurações da instância**:
+   - `Ignorar grupos`: **desligado** (precisa receber os grupos)
+   - `Sempre online`: **desligado**
+   - `Marcar mensagens como lidas`: **desligado** (o morador não vê "lido" sem ninguém ter respondido)
+   - `Rejeitar ligações`: **ligado**, com uma mensagem como "Este número não recebe ligações. Fale com a Alpha pelo (31) ...."
+6. Em **Webhook** da instância:
+   - URL: `https://SEU-ENDERECO-DO-PASSO-2/webhook/SEU_WEBHOOK_TOKEN`
+   - Eventos: marque **MESSAGES_UPSERT** e **CONNECTION_UPDATE**
+   - `Webhook by events`: desligado · `Webhook base64`: desligado
+   - Ative o webhook e salve.
+
+## Passo 4 — Criar o grupo de sugestões
+1. Do **seu celular pessoal**, crie um grupo (ex.: "🤖 Sugestões") só com você e o **número da IA**.
+2. Nesse grupo, envie do seu celular: **`!aqui`**
+3. Ele responde "✅ Este grupo agora recebe as análises e sugestões".
+   Nesse momento o seu número fica cadastrado como administrador: só você (e quem estiver em `EQUIPE_NUMEROS`)
+   consegue usar comandos. Comando enviado por qualquer outra pessoa é ignorado.
+
+## Passo 5 — Colocar a IA nos grupos do teste
+Escolha de 3 a 5 condomínios e adicione o número da IA nos grupos deles (moradores, síndico e conselho).
+Você precisa ser administrador do grupo para adicionar. Sugestão de aviso para o grupo de moradores:
+
+> Olá! Adicionamos o assistente da Alpha Condomínios ao grupo. Ele nos ajuda a não deixar nenhuma
+> dúvida sem resposta. Ele não responde mensagens: as respostas continuam vindo da nossa equipe.
+> As mensagens são tratadas conforme a LGPD e apagadas após 90 dias.
+
+## Passo 6 — Escolher os condomínios do teste
+Tudo no grupo de sugestões, do seu celular:
+
+```
+!sincronizar                  ← lê os nomes dos grupos em que a IA está (não lê mensagens)
+!condominios                  ← lista os condomínios encontrados
+!teste incluir belinha        ← coloca no teste (aceita parte do nome, sem acento)
+!teste incluir ametista
+!teste                        ← confere a lista
 ```
 
-## 3. Primeira configuração
-1. Crie um grupo só com você (o app exige adicionar alguém na criação: adicione e remova).
-2. Nele, envie `!aqui`. **Mande só ali** — num grupo de condomínio os moradores veriam.
-3. Envie `!sincronizar`: importa todos os seus grupos e mostra quantos ficaram sem condomínio.
-4. `!grupos sem` → resolva com `!vincular N Nome` (ex.: os "Conselho fiscal" sem nome).
-5. Grupos pessoais (família, amigos) entram como moradores: `!tipo N outro` ou `!ignorar N`.
-6. Conversas privadas pessoais: `!privados` e `!ignorar pN`.
+O sistema começa em **modo teste**: só olha os condomínios da lista. Mensagens dos outros nem são gravadas.
 
-## Modo teste (padrão)
-O serviço **começa em modo teste**: só lê e analisa grupos e privados dos condomínios que você colocar na lista.
-Mensagens dos demais nem são gravadas.
+Os ícones mostram quais grupos ele achou para cada condomínio: 👥 moradores · 🧑‍💼 síndico · 📊 conselho.
+Se um grupo tiver nome fora do padrão, veja com `!outros` e classifique com `!vincular`.
+
+---
+
+## No dia a dia
+Quando alguém pergunta algo, o sistema espera ~1,5 min (a pessoa terminar de escrever) e manda no seu grupo:
 
 ```
-!aqui
-!sincronizar
-!condominios belinha          ← confere o nome
-!teste incluir Belinha Ferrari
-!teste incluir Serra do Capivari
-!teste                        ← mostra o modo e a lista
+🟡 Belinha Ferrari
+👥 Moradores · assembleia
+
+👤 Maria 302 (26/10, 10:21):
+Alguém sabe quando vai ser a assembleia?
+
+📝 Quer saber a data da assembleia
+🔎 No grupo do síndico foi falado em novembro.
+💬 Sugestão na próxima mensagem 👇
 ```
+e logo depois a sugestão sozinha, para você **copiar e colar** no grupo do condomínio.
 
-Privados entram no teste quando a pessoa participa do grupo de moradores de um condomínio da lista
-(o vínculo é feito pela primeira mensagem dela nesse grupo).
+- 🔴 alta · 🟡 média · 🟢 baixa urgência
+- 🔎 é uma nota só para você (usa o que foi falado nos grupos de síndico e conselho). Nunca vai na sugestão.
+- **Quando você responde citando a mensagem** (arrastar para o lado → responder), do seu número,
+  a pendência fecha sozinha. Vale também para quem estiver em `EQUIPE_NUMEROS`.
+- Se você já respondeu antes de o sistema analisar, ele não te notifica.
 
-Quando estiver satisfeito: `!modo producao`. Para voltar: `!modo teste`.
-
-## Comandos (no grupo de sugestões)
+### Comandos
 | Comando | O que faz |
 |---|---|
-| `!teste` | Mostra o modo e os condomínios em teste |
-| `!teste incluir Nome` / `!teste remover Nome` | Coloca/tira condomínio do teste (aceita nome parcial ou número do `!grupos`) |
-| `!modo teste` / `!modo producao` | Só a lista de teste, ou tudo |
-| `!pendentes` | Sem resposta nas últimas 48h, por condomínio e tipo |
-| `!sincronizar` | Importa e classifica todos os grupos |
-| `!condominios [filtro]` | Condomínios e quais grupos cada um tem (👥🧑‍💼📊) |
-| `!grupos [página \| filtro \| sem]` | Grupos numerados |
-| `!privados [página \| filtro]` | Privados numerados (p1, p2…) |
-| `!vincular N Nome` | Liga grupo/privado ao condomínio (vale para `pN`) |
-| `!tipo N moradores\|sindico\|conselho\|outro` | Corrige o tipo |
-| `!ignorar N` / `!ativar N` | Para / volta a monitorar (`pN` para privados) |
+| `!pendentes` | Lista o que está sem resposta (últimas 48h), numerado |
+| `!ok 2` / `!ok todos` | Marca como resolvida a pendência 2 (ou todas) |
+| `!status` | Modo, grupos conhecidos, mensagens e pendências |
+| `!teste` · `!teste incluir X` · `!teste remover X` | Lista de condomínios em teste |
+| `!modo producao` / `!modo teste` | Liberar todos os condomínios / voltar só para a lista |
+| `!ignorar X` / `!ativar X` | Parar ou voltar a monitorar um condomínio |
+| `!outros` · `!vincular N tipo Nome` | Grupos fora do padrão de nome |
+| `!ajuda` | Mostra os comandos |
 
-Vínculos e tipos definidos por comando não são sobrescritos quando o grupo é renomeado.
+### Quais privados ele analisa
+Só as mensagens enviadas **para o número da IA**, e só de pessoas que ele já viu escrevendo no grupo de
+moradores de um condomínio monitorado. Os privados do **seu número pessoal ele não vê**.
+Se um morador mandar mensagem no privado da IA, a sugestão chega no grupo, mas a resposta precisa ser dada
+por você (do seu número) ou, se preferir, pelo celular da IA.
 
-## Respostas
-Quando **você** responde (grupo ou privado): se citou uma mensagem, só ela é fechada; se não citou, as pendências
-das últimas 48h daquela conversa são fechadas. Suas respostas ficam salvas como histórico para as próximas fases.
-Mensagens com mais de 90 dias são apagadas (`RETENTION_DAYS`).
+---
 
-## Limitações
-- Áudios, figurinhas e mídias sem legenda não são analisados.
-- Se você já rodou a versão anterior, as tabelas antigas (`groups`, `messages`) podem ser apagadas; esta usa `chats` e `chat_messages`.
+## Cuidados
+- **Teste com 3 a 5 condomínios** por uma ou duas semanas antes do `!modo producao`. Observe: notificações
+  desnecessárias, sugestões que **inventam informação** (o mais importante) e se a nota 🔎 ajuda.
+- **LGPD**: as mensagens ficam no banco por 90 dias e depois são apagadas (`RETENTION_DAYS`).
+  Vale um aviso nos grupos de que a administradora usa ferramenta de apoio no atendimento.
+- **Banimento**: a Evolution usa uma conexão não oficial. Como a IA só **lê** e escreve apenas no grupo de sugestões,
+  o risco é baixo, mas cresce se o número for colocado em muitos grupos de uma vez. Ao sair do teste,
+  adicione em lotes (por exemplo, 20 grupos por dia).
+- Se aparecer algo estranho, me mande um print da notificação que eu ajusto o prompt (`src/gemini.js`).
+
+## Problemas comuns
+| Sintoma | O que verificar |
+|---|---|
+| `!aqui` não responde | Webhook com a URL/token certos? Evento MESSAGES_UPSERT marcado? Veja os logs no Railway |
+| Comandos pararam de responder | Mande do mesmo número que fez o primeiro `!aqui`. Se trocou de celular/número, coloque o novo em `EQUIPE_NUMEROS` |
+| Nada é notificado | A IA está nos grupos? O condomínio está no `!teste`? A instância está conectada? |
+| Condomínio aparece duas vezes | Grupos com nomes diferentes (ex.: "Ametista" e "Ed Ametista Torre 1"). Use `!outros`/`!vincular` |
+| Erro "Gemini 400/403" nos logs | Chave do Gemini ou nome do modelo (`GEMINI_MODEL`) |

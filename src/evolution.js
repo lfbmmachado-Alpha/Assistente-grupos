@@ -1,40 +1,64 @@
 import { config } from './config.js';
-import { getSetting } from './db.js';
 
-const { url, apiKey, instance } = config.evolution;
-const groupNameCache = new Map();
+const headers = { apikey: config.evolutionKey, 'Content-Type': 'application/json' };
+const base = (path) => `${config.evolutionUrl}${path}/${encodeURIComponent(config.instance)}`;
 
-async function call(path, options = {}) {
-  const res = await fetch(`${url}${path}`, {
-    ...options,
-    headers: { 'Content-Type': 'application/json', apikey: apiKey, ...(options.headers || {}) },
-  });
-  if (!res.ok) throw new Error(`Evolution ${res.status}: ${await res.text()}`);
-  return res.json();
-}
+// IDs das mensagens que o próprio sistema enviou (para não processar de volta)
+export const sentIds = new Set();
 
-/**
- * ÚNICA forma de enviar mensagem neste serviço: sempre para o grupo de sugestões.
- * Não existe função para enviar a grupos de condomínio ou a contatos.
- */
-export async function sendToSuggestionGroup(text) {
-  const jid = await getSetting('suggestion_group');
-  if (!jid) throw new Error('Grupo de sugestões não definido (envie !aqui no grupo escolhido).');
-  return call(`/message/sendText/${instance}`, {
-    method: 'POST',
-    body: JSON.stringify({ number: jid, text }),
+// Fila de envio: no máximo uma mensagem a cada 1,5 s, para não chamar atenção do WhatsApp
+const fila = [];
+let enviando = false;
+
+export function sendText(jid, text) {
+  return new Promise((resolve) => {
+    fila.push({ jid, text, resolve });
+    processarFila();
   });
 }
 
-export async function getGroupName(jid) {
-  if (groupNameCache.has(jid)) return groupNameCache.get(jid);
-  const data = await call(`/group/findGroupInfos/${instance}?groupJid=${encodeURIComponent(jid)}`);
-  const name = data?.subject || null;
-  groupNameCache.set(jid, name);
-  return name;
+async function processarFila() {
+  if (enviando) return;
+  enviando = true;
+  while (fila.length) {
+    const { jid, text, resolve } = fila.shift();
+    try {
+      const res = await fetch(base('/message/sendText'), {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ number: jid, text }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) console.error('[evolution] envio falhou', res.status, JSON.stringify(body).slice(0, 300));
+      const id = body?.key?.id;
+      if (id) {
+        sentIds.add(id);
+        if (sentIds.size > 2000) sentIds.delete(sentIds.values().next().value);
+      }
+      resolve(body);
+    } catch (e) {
+      console.error('[evolution] erro de envio:', e.message);
+      resolve(null);
+    }
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  enviando = false;
 }
 
+// Lista todos os grupos em que o número participa (só nomes, sem participantes)
 export async function fetchAllGroups() {
-  const data = await call(`/group/fetchAllGroups/${instance}?getParticipants=false`);
-  return (Array.isArray(data) ? data : []).filter((g) => g?.id?.endsWith('@g.us'));
+  const res = await fetch(`${base('/group/fetchAllGroups')}?getParticipants=false`, { headers });
+  if (!res.ok) throw new Error(`fetchAllGroups ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const data = await res.json();
+  return (Array.isArray(data) ? data : data?.groups || []).map((g) => ({ jid: g.id, name: g.subject || '' }));
+}
+
+export async function fetchGroupName(jid) {
+  try {
+    const res = await fetch(`${base('/group/findGroupInfos')}?groupJid=${encodeURIComponent(jid)}`, { headers });
+    if (!res.ok) return '';
+    return (await res.json())?.subject || '';
+  } catch {
+    return '';
+  }
 }

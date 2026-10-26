@@ -1,31 +1,34 @@
-import 'dotenv/config';
-
-function required(key) {
-  const value = process.env[key];
-  if (!value) throw new Error(`Variável de ambiente ${key} não definida`);
-  return value;
+// Todas as configurações vêm das variáveis de ambiente (Railway → Variables).
+function req(nome) {
+  const v = process.env[nome];
+  if (!v) throw new Error(`Variável de ambiente obrigatória ausente: ${nome}`);
+  return v;
 }
 
 export const config = {
   port: Number(process.env.PORT || 3000),
-  webhookToken: required('WEBHOOK_TOKEN'),
-  databaseUrl: required('DATABASE_URL'),
-  pgSsl: process.env.PGSSL === 'true',
-  evolution: {
-    url: required('EVOLUTION_URL').replace(/\/$/, ''),
-    apiKey: required('EVOLUTION_API_KEY'),
-    instance: required('EVOLUTION_INSTANCE'),
-  },
-  gemini: {
-    apiKey: required('GEMINI_API_KEY'),
-    model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
-  },
-  ownerName: process.env.OWNER_NAME || 'Administração',
-  contextSize: Number(process.env.CONTEXT_SIZE || 15),
-  minChars: Number(process.env.MIN_CHARS || 4),
+  databaseUrl: req('DATABASE_URL'),
+
+  // Evolution API
+  evolutionUrl: req('EVOLUTION_API_URL').replace(/\/$/, ''),
+  evolutionKey: req('EVOLUTION_API_KEY'),
+  instance: req('EVOLUTION_INSTANCE'),
+
+  // Segurança do webhook: a URL fica /webhook/<token>
+  webhookToken: req('WEBHOOK_TOKEN'),
+
+  // Gemini
+  geminiKey: req('GEMINI_API_KEY'),
+  geminiModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+
+  // Comportamento
+  defaultMode: process.env.DEFAULT_MODE || 'teste',          // teste | producao
+  debounceSeconds: Number(process.env.DEBOUNCE_SECONDS || 90), // espera a pessoa terminar de escrever
   pendingHours: Number(process.env.PENDING_HOURS || 48),
-  retentionDays: Number(process.env.RETENTION_DAYS || 90),
-  maxConcurrent: Number(process.env.MAX_CONCURRENT || 3),
-  defaultMode: process.env.DEFAULT_MODE === 'producao' ? 'producao' : 'teste',
-  crossContextSize: Number(process.env.CROSS_CONTEXT_SIZE || 10),
+  retentionDays: Number(process.env.RETENTION_DAYS || 90),     // LGPD: apaga mensagens antigas
+  contextMessages: Number(process.env.CONTEXT_MESSAGES || 25),
+
+  // Números (ou LIDs) da equipe Alpha. Respostas deles fecham pendências e eles podem usar comandos.
+  // Quem envia o primeiro !aqui é cadastrado automaticamente, não precisa estar aqui.
+  equipe: (process.env.EQUIPE_NUMEROS || '').split(',').map((s) => s.replace(/\D/g, '')).filter(Boolean),
 };
