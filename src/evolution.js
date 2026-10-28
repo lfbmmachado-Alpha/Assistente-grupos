@@ -74,3 +74,23 @@ export async function getMediaBase64(key) {
   const data = await res.json();
   return { base64: data?.base64, mimetype: data?.mimetype };
 }
+
+// Envia um arquivo (planilha) para um chat
+export async function sendDocument(jid, base64, fileName, caption = '') {
+  const res = await fetch(base('/message/sendMedia'), {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      number: jid,
+      mediatype: 'document',
+      mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      caption,
+      media: base64,
+      fileName,
+    }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`sendMedia ${res.status}: ${JSON.stringify(body).slice(0, 200)}`);
+  if (body?.key?.id) sentIds.add(body.key.id);
+  return body;
+}

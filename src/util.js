@@ -27,8 +27,21 @@ export const digitos = (jid) => (jid || '').split('@')[0].split(':')[0].replace(
 export async function isEquipe(msg) {
   if (msg.fromMe) return true;
   const admins = await getList('admins');
+  const vist = await getVistoriadores();
   const ids = [digitos(msg.authorJid), digitos(msg.authorAlt)].filter(Boolean);
-  return ids.some((i) => admins.includes(i) || config.equipe.includes(i));
+  const ok = ids.some((i) => admins.includes(i) || config.equipe.includes(i) || vist[i]);
+  // Em grupo o WhatsApp às vezes manda só o LID: quando vierem os dois, guarda o LID do vistoriador
+  const [lid, tel] = ids;
+  if (ids.length === 2 && vist[tel] && !vist[lid]) {
+    vist[lid] = vist[tel];
+    await setSetting('vistoriadores', JSON.stringify(vist));
+  }
+  return ok;
+}
+
+// { "<telefone ou LID>": "Nome do vistoriador" }
+export async function getVistoriadores() {
+  try { return JSON.parse(await getSetting('vistoriadores', '{}')); } catch { return {}; }
 }
 
 export async function registrarAdmin(msg) {

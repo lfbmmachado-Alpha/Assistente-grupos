@@ -10,6 +10,7 @@ import { parseMessage } from './parse.js';
 import { analisar, transcrever } from './gemini.js';
 import { handleCommand } from './commands.js';
 import { registrarExemplo, exemplosPara, fatosDo, docsDo } from './knowledge.js';
+import { processarVisita } from './visitas.js';
 
 // ---------- entrada do webhook ----------
 export async function handleWebhook(body) {
@@ -66,8 +67,10 @@ async function processar(d) {
     }
   }
   const ok = await permitido(chat, condoKey);
-  console.log(`[recebida] ${chat.kind} "${chat.name || msg.chatJid}" condo=${condoKey || '-'} equipe=${msg.equipe} ${ok ? 'MONITORADO' : 'ignorado'}: ${msg.text.slice(0, 60).replace(/\n/g, ' ')}`);
-  if (!ok) return; // fora do teste / ignorado: nem grava
+  // Controle de vistorias: mensagens da equipe em QUALQUER grupo de condomínio (independe do modo teste)
+  const ehVisita = msg.isGroup && msg.equipe && !msg.fromMe && !!condoKey && chat.kind !== 'outro';
+  console.log(`[recebida] ${chat.kind} "${chat.name || msg.chatJid}" condo=${condoKey || '-'} equipe=${msg.equipe} ${ok ? 'MONITORADO' : ehVisita ? 'só vistoria' : 'ignorado'}: ${msg.text.slice(0, 60).replace(/\n/g, ' ')}`);
+  if (!ok && !ehVisita) return; // fora do teste / ignorado: nem grava
 
   if (msg.audio) {
     try {
@@ -80,6 +83,11 @@ async function processar(d) {
       console.error('[áudio] falha na transcrição:', e.message);
     }
   }
+
+  if (ehVisita) {
+    await processarVisita({ ...chat, condo_key: condoKey }, condoKey, msg).catch((e) => console.error('[visita]', e.message));
+  }
+  if (!ok) return;
 
   const nova = await saveMessage({ ...msg, fromMe: msg.equipe, kind: chat.kind });
   if (!nova) return; // duplicada

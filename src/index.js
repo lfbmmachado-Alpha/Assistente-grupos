@@ -3,6 +3,7 @@ import { config } from './config.js';
 import { initDb, purgeOld } from './db.js';
 import { handleWebhook } from './handler.js';
 import { initKnowledge, aprender } from './knowledge.js';
+import { initVisitas, alertaSemanal } from './visitas.js';
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -20,6 +21,7 @@ app.post(['/webhook/:token', '/webhook/:token/:event'], (req, res) => {
 
 await initDb();
 await initKnowledge();
+await initVisitas();
 
 // LGPD: apaga mensagens mais antigas que RETENTION_DAYS, uma vez por dia
 purgeOld(config.retentionDays).catch(() => {});
@@ -29,5 +31,8 @@ setInterval(() => purgeOld(config.retentionDays).catch((e) => console.error('[li
 const rodarAprendizado = () => aprender().catch((e) => console.error('[aprendizado]', e.message));
 setTimeout(rodarAprendizado, 10 * 60 * 1000);
 setInterval(rodarAprendizado, 3 * 3600 * 1000);
+
+// Vistorias: na sexta às 12h envia os condomínios pendentes da semana
+setInterval(() => alertaSemanal().catch((e) => console.error('[visita]', e.message)), 60 * 1000);
 
 app.listen(config.port, () => console.log(`assistente-grupos ouvindo na porta ${config.port}`));

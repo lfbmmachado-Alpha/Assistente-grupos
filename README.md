@@ -146,6 +146,30 @@ por você (do seu número) ou, se preferir, pelo celular da IA.
 
 Ela continua **só sugerindo**: nunca escreve nos grupos dos condomínios.
 
+## Controle de vistorias
+A IA reconhece nos grupos dos condomínios (moradores, síndico ou conselho) os avisos da equipe:
+"Estou no condomínio para a vistoria" → **entrada** · "Vistoria finalizada" → **saída**.
+Vale para **todos** os grupos em que a IA estiver, mesmo fora do modo teste. Áudios também contam.
+
+- A primeira visita da semana é **ordinária**; as demais, ou as que falam em emergência, vazamento, obra,
+  assembleia ou chamado, são **extraordinárias**. Ordinária pendente só sai da lista com uma visita ordinária.
+- Sem aviso de saída, a saída é estimada pela última mensagem do vistoriador no dia (marcada com *).
+- **Sexta às 12h** chega no grupo de sugestões a lista de condomínios sem vistoria na semana.
+- Cadastre condomínios e vistoriadores enviando a planilha (modelo: *Carteira de vistorias - modelo.xlsx*)
+  com a legenda `!vistorias importar`. Condomínio da planilha sem grupo da IA aparece como ⚠️.
+
+| Comando | O que faz |
+|---|---|
+| `!vistorias` | Situação da semana por vistoriador (✅ ❌ ⚠️) |
+| `!vistorias pendentes` · `!vistorias passada` | Só o que falta · semana anterior |
+| `!vistorias Nome` | Histórico de visitas de um condomínio |
+| `!vistorias exportar [mm/aaaa]` | Planilha Excel com todas as visitas (entrada, saída, duração) |
+| `!visita Nome dd/mm hh:mm-hh:mm Vistoriador [extra motivo]` | Lança ou corrige uma visita à mão |
+| `!visita remover N` | Apaga a visita N listada em `!vistorias Nome` |
+| `!vistoriadores` | Vistoriadores cadastrados |
+
+Variáveis opcionais: `VISITAS_ALERTA_DIA` (5 = sexta) e `VISITAS_ALERTA_HORA` (12).
+
 ## Cuidados
 - **Teste com 3 a 5 condomínios** por uma ou duas semanas antes do `!modo producao`. Observe: notificações
   desnecessárias, sugestões que **inventam informação** (o mais importante) e se a nota 🔎 ajuda.

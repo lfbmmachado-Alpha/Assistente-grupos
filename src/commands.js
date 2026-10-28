@@ -3,6 +3,11 @@ import { pool, setSetting, upsertChat, listCondos, listPending, resolveById, sta
 import { fetchAllGroups, getMediaBase64 } from './evolution.js';
 import { lerDocumento } from './gemini.js';
 import {
+  relatorio, historico, linhaVisita, removerVisita, lancarManual, listarCarteira, importarCarteira,
+  enviarPlanilha, semana, dataHoraBR,
+} from './visitas.js';
+import { getVistoriadores } from './util.js';
+import {
   aprender, fatosDo, adicionarFato, removerFato, docsDo, salvarDocumento, removerDocumento, listarDocumentos, contarExemplos,
 } from './knowledge.js';
 import { classifyGroup, normalize, unificar } from './groups.js';
@@ -26,6 +31,17 @@ const AJUDA = `🤖 *Comandos* (só neste grupo)
 !status — resumo do sistema
 !assinatura — quem assina as sugestões de cada condomínio
 
+*Vistorias*
+!vistorias — situação da semana ✅ ❌ ⚠️
+!vistorias pendentes — só o que falta
+!vistorias passada — semana anterior
+!vistorias Nome — visitas de um condomínio
+!vistorias exportar [mm/aaaa] — planilha Excel
+!visita Nome dd/mm hh:mm-hh:mm Vistoriador [extra motivo] — lança à mão
+!visita remover N — apaga a visita N de !vistorias Nome
+!vistoriadores — quem está cadastrado
+Planilha com legenda *!vistorias importar* — condomínios e vistoriadores
+
 *Conhecimento*
 !base Nome — o que a IA já sabe do condomínio
 !fato Nome: texto — ensina um fato à mão
@@ -44,6 +60,7 @@ let ultimaListaPendentes = [];
 let ultimaListaOutros = [];
 let ultimaListaFatos = [];
 let ultimaListaDocs = [];
+let ultimaListaVisitas = [];
 
 export async function handleCommand(msg, suggestionGroup) {
   const texto = msg.text.trim();
@@ -327,6 +344,109 @@ export async function handleCommand(msg, suggestionGroup) {
       await reply(total
         ? `🎓 *Respostas da equipe aprendidas: ${total}*\n${c.map((x) => `• ${nomeDe(x.condo_key)}: ${x.n}`).join('\n')}\n\nCada vez que a equipe responde um pedido (de preferência citando a mensagem), vira exemplo.`
         : '🎓 Nenhuma resposta aprendida ainda. Quando a equipe responder um pedido nos grupos (de preferência citando a mensagem), ela vira exemplo.');
+      return true;
+    }
+
+    case 'vistorias':
+    case 'vistoria': {
+      const sub = normalize(args[0] || '');
+      if (!sub || sub === 'pendentes' || sub === 'passada' || sub === 'semana') {
+        const msgs = await relatorio(sub === 'passada' ? -1 : 0, { apenasPendentes: sub === 'pendentes' });
+        for (const m of msgs) await reply(m);
+        return true;
+      }
+      if (sub === 'importar') {
+        if (!msg.documento) {
+          await reply('Envie a planilha (Excel ou CSV) aqui no grupo com a *legenda*: !vistorias importar\nColunas: Condomínio | Vistoriador | Telefone');
+          return true;
+        }
+        await reply('📥 Lendo a planilha…');
+        try {
+          const midia = await getMediaBase64(msg.key);
+          if (!midia?.base64) throw new Error('não consegui baixar o arquivo');
+          const r = await importarCarteira(Buffer.from(midia.base64, 'base64'));
+          await reply(
+            `✅ Planilha importada: *${r.total} condomínios*, ${r.vistoriadores.length} vistoriadores (${r.vistoriadores.join(', ') || '-'})` +
+            (r.semTelefone.length ? `\n\n📵 Sem telefone (não vou reconhecer as mensagens deles): ${r.semTelefone.join(', ')}` : '') +
+            (r.semGrupo.length ? `\n\n⚠️ *${r.semGrupo.length} sem grupo da IA* (adicione o número nos grupos e rode !sincronizar):\n${r.semGrupo.slice(0, 60).map((n) => `• ${n}`).join('\n')}${r.semGrupo.length > 60 ? '\n…' : ''}` : '\n\n🎉 Todos os condomínios têm grupo com a IA.')
+          );
+        } catch (e) {
+          console.error('[carteira]', e.message);
+          await reply(`❌ Não consegui importar: ${e.message}`);
+        }
+        return true;
+      }
+      if (sub === 'exportar') {
+        let inicio, fim, titulo;
+        const mes = (args[1] || '').match(/^(\d{1,2})\/(\d{4})$/);
+        if (mes) {
+          const m = Number(mes[1]), a = Number(mes[2]);
+          inicio = dataHoraBR(`01/${m}/${a}`, '00:00');
+          fim = dataHoraBR(`01/${m === 12 ? 1 : m + 1}/${m === 12 ? a + 1 : a}`, '00:00');
+          titulo = `${String(m).padStart(2, '0')}-${a}`;
+        } else {
+          const hoje = new Date(Date.now() - 3 * 3600 * 1000);
+          const m = hoje.getUTCMonth() + 1, a = hoje.getUTCFullYear();
+          inicio = dataHoraBR(`01/${m}/${a}`, '00:00');
+          fim = semana(1).inicio;
+          titulo = `${String(m).padStart(2, '0')}-${a}`;
+        }
+        try {
+          const n = await enviarPlanilha(msg.chatJid, inicio, fim, titulo);
+          if (!n) await reply('Planilha enviada, mas ainda não há visitas registradas no período.');
+        } catch (e) {
+          console.error('[exportar]', e.message);
+          await reply(`❌ Não consegui gerar a planilha: ${e.message}`);
+        }
+        return true;
+      }
+      // histórico de um condomínio
+      const r = await acharCondo(resto);
+      if (r.erro) { await reply(r.erro); return true; }
+      ultimaListaVisitas = await historico(r.condo.condo_key);
+      await reply(ultimaListaVisitas.length
+        ? `🏢 *${r.condo.condo_name}*: últimas visitas\n\n${ultimaListaVisitas.map(linhaVisita).join('\n')}\n\n* = saída estimada · ✍️ = lançada à mão\nPara apagar: !visita remover N`
+        : `🏢 *${r.condo.condo_name}*: nenhuma visita registrada ainda.`);
+      return true;
+    }
+
+    case 'visita': {
+      if (normalize(args[0] || '') === 'remover') {
+        const v = ultimaListaVisitas[Number(args[1]) - 1];
+        if (!v) { await reply('Use !vistorias Nome primeiro e depois !visita remover N.'); return true; }
+        await removerVisita(v.id);
+        await reply(`🗑️ Visita removida: ${v.condo_nome} ${linhaVisita(v, 0).slice(3)}`);
+        return true;
+      }
+      // !visita Nome dd/mm hh:mm-hh:mm Vistoriador [extra motivo]
+      const iData = args.findIndex((a) => /^\d{1,2}\/\d{1,2}(\/\d{2,4})?$/.test(a));
+      const faixaH = args[iData + 1] || '';
+      const mh = faixaH.match(/^(\d{1,2}[:h]\d{2})(?:-(\d{1,2}[:h]\d{2}))?$/);
+      if (iData < 1 || !mh || !args[iData + 2]) {
+        await reply('Use: !visita Nome dd/mm hh:mm-hh:mm Vistoriador [extra motivo]\nEx.: !visita mirante 28/10 09:10-10:30 Kesse\nEx.: !visita ipe 28/10 14:00-14:40 Kesse extra vazamento');
+        return true;
+      }
+      const r = await acharCondo(args.slice(0, iData).join(' '));
+      if (r.erro) { await reply(r.erro); return true; }
+      const vistoriador = args[iData + 2];
+      const resto2 = args.slice(iData + 3);
+      const extra = /^extra/i.test(resto2[0] || '');
+      const motivo = (extra ? resto2.slice(1) : resto2).join(' ');
+      const entrada = dataHoraBR(args[iData], mh[1]);
+      const saida = mh[2] ? dataHoraBR(args[iData], mh[2]) : null;
+      await lancarManual({ condo_key: r.condo.condo_key, condo_nome: r.condo.condo_name, vistoriador, tipo: extra ? 'extraordinaria' : 'ordinaria', motivo, entrada, saida });
+      await reply(`✍️ Visita lançada: *${r.condo.condo_name}* ${args[iData]} ${mh[1]}${mh[2] ? `–${mh[2]}` : ''} · ${vistoriador} · ${extra ? 'extraordinária' : 'ordinária'}${motivo ? ` (${motivo})` : ''}`);
+      return true;
+    }
+
+    case 'vistoriadores': {
+      const cart = await listarCarteira();
+      const vist = await getVistoriadores();
+      if (!cart.length) { await reply('Nenhuma planilha importada ainda. Envie a planilha com a legenda: !vistorias importar'); return true; }
+      const cont = new Map();
+      for (const c of cart) cont.set(c.vistoriador || 'Sem vistoriador', (cont.get(c.vistoriador || 'Sem vistoriador') || 0) + 1);
+      const comTel = new Set(Object.values(vist));
+      await reply(`👷 *Vistoriadores*\n${[...cont].map(([n, q]) => `• ${n}: ${q} condomínios${n !== 'Sem vistoriador' && !comTel.has(n) ? ' 📵 sem telefone' : ''}`).join('\n')}`);
       return true;
     }
 
