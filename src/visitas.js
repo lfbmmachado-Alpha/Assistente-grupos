@@ -156,11 +156,13 @@ export async function processarVisita(chat, condoKey, msg) {
 }
 
 // ---------- carteira (planilha de condomínios e vistoriadores) ----------
-function casarCondo(nome, condos) {
+// chavesProprias: chaves exatas de todos os nomes da planilha (evita casar "Minas" com "Minas das Esmeraldas")
+function casarCondo(nome, condos, chavesProprias = new Set()) {
   const cls = classifyGroup(`Condominio ${nome}`);
   if (!cls.condo_key) return null;
   if (condos.some((c) => c.condo_key === cls.condo_key)) return cls.condo_key;
   const u = unificar(cls, condos);
+  if (u.condo_key !== cls.condo_key && chavesProprias.has(u.condo_key)) return cls.condo_key;
   return condos.some((c) => c.condo_key === u.condo_key) ? u.condo_key : cls.condo_key;
 }
 
@@ -174,18 +176,29 @@ export async function importarCarteira(buffer) {
   const cC = col('condominio'), cV = col('vistoriador', 'responsavel', 'gestor'), cT = col('telefone', 'celular', 'whatsapp', 'numero');
 
   const condos = (await listCondos()).map((c) => ({ condo_key: c.condo_key, condo_name: c.condo_name }));
+  const nomes0 = linhas.slice(iCab + 1).map((l) => String(l[cC] || '').trim()).filter(Boolean);
+  const chavesProprias = new Set(nomes0.map((n) => classifyGroup(`Condominio ${n}`).condo_key).filter(Boolean));
   const rows = [];
   for (const l of linhas.slice(iCab + 1)) {
     const nome = String(l[cC] || '').trim();
     if (!nome) continue;
     rows.push({
       nome,
-      key: casarCondo(nome, condos),
+      key: casarCondo(nome, condos, chavesProprias),
       vistoriador: cV >= 0 ? String(l[cV] || '').trim() : '',
       telefone: cT >= 0 ? String(l[cT] || '').trim() : '',
     });
   }
   if (!rows.length) throw new Error('a planilha não tem condomínios abaixo do cabeçalho');
+
+  // Aba opcional "Telefones": Vistoriador | Telefone (preenche quem ficou sem telefone na aba principal)
+  const abaTel = wb.SheetNames.find((n) => normalize(n).includes('telefone'));
+  if (abaTel) {
+    const tl = XLSX.utils.sheet_to_json(wb.Sheets[abaTel], { header: 1, defval: '' });
+    const mapa = {};
+    for (const l of tl.slice(1)) if (String(l[0]).trim() && String(l[1]).trim()) mapa[normalize(String(l[0]))] = String(l[1]).trim();
+    for (const r of rows) if (!r.telefone && r.vistoriador) r.telefone = mapa[normalize(r.vistoriador)] || '';
+  }
 
   await q('DELETE FROM carteira');
   const vist = {};
