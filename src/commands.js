@@ -7,6 +7,8 @@ import {
   enviarPlanilha, semana, dataHoraBR,
 } from './visitas.js';
 import { getVistoriadores } from './util.js';
+import { perguntar } from './consulta.js';
+import { iniciarEstudo, importarHistorico, aprenderTudo, listarEstudos, liberar, alterarDias, resumoCondo } from './estudo.js';
 import {
   aprender, fatosDo, adicionarFato, removerFato, docsDo, salvarDocumento, removerDocumento, listarDocumentos, contarExemplos,
 } from './knowledge.js';
@@ -24,6 +26,16 @@ const AJUDA = `🤖 *Comandos* (só neste grupo)
 !teste incluir Nome — coloca um condomínio no teste
 !teste remover Nome — tira do teste
 !modo teste | !modo producao
+
+*Estudo (condomínio novo aprende antes de sugerir)*
+!estudar Nome [dias] — inclui, lê o que já foi conversado e estuda (padrão 7 dias)
+!estudar novos — estuda todos os condomínios encontrados que ainda não estão no teste
+!estudo — quem está estudando e o que já aprendeu
+!estudo liberar Nome — encerra o estudo e libera as sugestões
+
+*Perguntar à IA*
+!perguntar Nome: sua pergunta — ex.: !perguntar torino: o que está pendente?
+!resumo Nome — o que está acontecendo no condomínio (últimos 7 dias)
 
 *Dia a dia*
 !pendentes — o que está sem resposta
@@ -163,9 +175,14 @@ export async function handleCommand(msg, suggestionGroup) {
         const nome = args.slice(1).join(' ');
         const r = await acharCondo(nome);
         if (r.erro) { await reply(r.erro); return true; }
-        lista = sub === 'incluir' ? [...new Set([...lista, r.condo.condo_key])] : lista.filter((k) => k !== r.condo.condo_key);
-        await setSetting('test_condos', JSON.stringify(lista));
-        await reply(`${sub === 'incluir' ? '🧪 Incluído' : '➖ Removido'}: ${r.condo.condo_name}`);
+        if (sub === 'incluir' && !lista.includes(r.condo.condo_key)) {
+          await estudarCondo(r.condo, undefined, reply);
+          lista = await getList('test_condos');
+        } else if (sub === 'remover') {
+          lista = lista.filter((k) => k !== r.condo.condo_key);
+          await setSetting('test_condos', JSON.stringify(lista));
+          await reply(`➖ Removido: ${r.condo.condo_name}`);
+        }
       }
       const modo = await getMode();
       const condos = await listCondos();
@@ -450,6 +467,77 @@ export async function handleCommand(msg, suggestionGroup) {
       return true;
     }
 
+    case 'estudar': {
+      if (normalize(args[0] || '') === 'novos') {
+        const teste = await getList('test_condos');
+        const novos = (await listCondos()).filter((c) => !teste.includes(c.condo_key));
+        if (!novos.length) { await reply('Nenhum condomínio novo. Adicione a IA nos grupos e rode !sincronizar.'); return true; }
+        await reply(`🎓 Vou estudar ${novos.length} condomínio(s): ${novos.map((c) => c.condo_name).join(', ')}\nIsso pode levar alguns minutos.`);
+        for (const c of novos) await estudarCondo(c, undefined, null);
+        for (const m of await mensagensEstudo()) await reply(m);
+        return true;
+      }
+      const dias = /^\d+$/.test(args[args.length - 1] || '') ? Number(args[args.length - 1]) : undefined;
+      const nome = (dias !== undefined ? args.slice(0, -1) : args).join(' ');
+      const r = await acharCondo(nome);
+      if (r.erro) { await reply(r.erro + '\n\nUse: !estudar Nome [dias]'); return true; }
+      await estudarCondo(r.condo, dias, reply);
+      return true;
+    }
+
+    case 'perguntar':
+    case 'pergunta':
+    case 'p':
+    case 'resumo': {
+      let nome, pergunta, dias = 30;
+      if (cmd === 'resumo') {
+        nome = resto;
+        dias = 7;
+        pergunta = 'Faça um resumo do que está acontecendo no condomínio: assuntos principais, pendências e cobranças sem resposta da equipe, reclamações, decisões, andamento de obras/orçamentos, e o clima geral dos moradores e do síndico.';
+      } else {
+        const i = resto.indexOf(':');
+        nome = i >= 0 ? resto.slice(0, i) : '';
+        pergunta = i >= 0 ? resto.slice(i + 1).trim() : '';
+      }
+      if (!nome.trim() || !pergunta) {
+        await reply('Use: !perguntar NomeDoCondominio: sua pergunta\nEx.: !perguntar torino: o síndico está satisfeito com a limpeza?\nOu: !resumo torino');
+        return true;
+      }
+      const r = await acharCondo(nome.trim());
+      if (r.erro) { await reply(r.erro); return true; }
+      await reply(`🔎 Consultando *${r.condo.condo_name}*…`);
+      try {
+        const out = await perguntar(r.condo, pergunta, dias);
+        await reply(`🤖 *${r.condo.condo_name}*\n\n${out.resposta}\n\n_Base: ${out.mensagens} mensagens dos últimos ${dias} dias, base de conhecimento e documentos._`);
+      } catch (e) {
+        console.error('[perguntar]', e.message);
+        await reply(`❌ Não consegui consultar agora: ${e.message}`);
+      }
+      return true;
+    }
+
+    case 'estudo': {
+      const sub = normalize(args[0] || '');
+      if (sub === 'liberar') {
+        const r = await acharCondo(args.slice(1).join(' '));
+        if (r.erro) { await reply(r.erro); return true; }
+        await liberar(r.condo.condo_key);
+        const s = await resumoCondo(r.condo.condo_key);
+        await reply(`✅ *${r.condo.condo_name}* liberado: a partir de agora envio sugestões.\n🧠 ${s.fatos} fatos · 🎓 ${s.exemplos} exemplos · 📨 ${s.msgs} mensagens`);
+        return true;
+      }
+      if (sub === 'dias') {
+        const dias = Number(args[args.length - 1]);
+        const r = await acharCondo(args.slice(1, -1).join(' '));
+        if (r.erro || !dias) { await reply('Use: !estudo dias Nome N'); return true; }
+        await alterarDias(r.condo.condo_key, dias);
+        await reply(`📅 *${r.condo.condo_name}*: estudo de ${dias} dia(s) contados do início.`);
+        return true;
+      }
+      for (const m of await mensagensEstudo()) await reply(m);
+      return true;
+    }
+
     case 'status': {
       const s = await stats();
       const teste = await getList('test_condos');
@@ -502,6 +590,34 @@ export async function handleCommand(msg, suggestionGroup) {
       await reply(`Comando não reconhecido. Envie *!ajuda*.`);
       return true;
   }
+}
+
+async function estudarCondo(condo, dias, reply) {
+  const lista = await getList('test_condos');
+  if (!lista.includes(condo.condo_key)) await setSetting('test_condos', JSON.stringify([...lista, condo.condo_key]));
+  const d = dias ?? Number(process.env.ESTUDO_DIAS || 7);
+  await iniciarEstudo(condo.condo_key, d);
+  if (reply) await reply(`🎓 *${condo.condo_name}*: estudando por ${d} dia(s). Lendo o que já foi conversado nos grupos…`);
+  const h = await importarHistorico(condo.condo_key);
+  const a = await aprenderTudo(condo.condo_key);
+  const s = await resumoCondo(condo.condo_key);
+  if (reply) {
+    await reply(
+      `📚 *${condo.condo_name}*\n📨 ${h.novas} mensagens anteriores importadas (${h.grupos} grupo(s))\n` +
+      `🧠 ${s.fatos} fatos na base (+${a.novos})\n🎓 ${s.exemplos} respostas da equipe aprendidas\n\n` +
+      `Durante o estudo não envio sugestões deste condomínio. Ao final aviso aqui.\nPara liberar antes: !estudo liberar ${condo.condo_name}`
+    );
+  }
+}
+
+async function mensagensEstudo() {
+  const l = await listarEstudos();
+  if (!l.length) return ['🎓 Nenhum condomínio em estudo. Todos os condomínios do teste já estão enviando sugestões.'];
+  const linhas = l.map((e) => {
+    const fim = e.fim.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    return `• *${e.nome}* até ${fim}\n   📨 ${e.msgs} msgs · 🧠 ${e.fatos} fatos · 🎓 ${e.exemplos} exemplos`;
+  });
+  return [`🎓 *Em estudo (${l.length})*\n\n${linhas.join('\n')}\n\nPara liberar antes: !estudo liberar Nome`];
 }
 
 async function acharCondo(nome) {

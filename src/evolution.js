@@ -94,3 +94,22 @@ export async function sendDocument(jid, base64, fileName, caption = '') {
   if (body?.key?.id) sentIds.add(body.key.id);
   return body;
 }
+
+// Mensagens que a Evolution já guardou de um chat (desde que o número entrou), mais recentes primeiro
+export async function fetchMessages(remoteJid, limite = 1500) {
+  const todos = [];
+  for (let page = 1; todos.length < limite && page <= 30; page++) {
+    const res = await fetch(base('/chat/findMessages'), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ where: { key: { remoteJid } }, page, offset: 100 }),
+    });
+    if (!res.ok) throw new Error(`findMessages ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    const data = await res.json();
+    const bloco = data?.messages?.records || data?.records || (Array.isArray(data) ? data : []);
+    todos.push(...bloco);
+    const pages = data?.messages?.pages || data?.pages || 1;
+    if (!bloco.length || page >= pages) break;
+  }
+  return todos.slice(0, limite);
+}

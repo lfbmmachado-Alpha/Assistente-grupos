@@ -146,6 +146,22 @@ por você (do seu número) ou, se preferir, pelo celular da IA.
 
 Ela continua **só sugerindo**: nunca escreve nos grupos dos condomínios.
 
+## Período de estudo (condomínio novo)
+Ao incluir um condomínio (`!estudar Nome` ou `!teste incluir Nome`), a IA:
+1. importa o que já foi conversado nos grupos desde que o número entrou (o WhatsApp não entrega mensagens de antes);
+2. monta a base de conhecimento e aprende com as respostas da equipe;
+3. fica **estudando por 7 dias** sem enviar sugestões (ajuste: `!estudar Nome 3` ou variável `ESTUDO_DIAS`);
+4. ao final avisa no grupo de sugestões e passa a sugerir.
+
+| Comando | O que faz |
+|---|---|
+| `!estudar Nome [dias]` | Inclui o condomínio e começa o estudo |
+| `!estudar novos` | Estuda todos os condomínios encontrados que ainda não estão no teste |
+| `!estudo` | Quem está estudando e o que já aprendeu |
+| `!estudo liberar Nome` | Encerra o estudo e libera as sugestões |
+| `!perguntar Nome: pergunta` | Pergunte o que quiser sobre o condomínio (conversas, base, documentos) |
+| `!resumo Nome` | Resumo da semana: assuntos, pendências, reclamações e clima |
+
 ## Controle de vistorias
 A IA reconhece nos grupos dos condomínios (moradores, síndico ou conselho) os avisos da equipe:
 "Estou no condomínio para a vistoria" → **entrada** · "Vistoria finalizada" → **saída**.

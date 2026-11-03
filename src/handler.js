@@ -11,6 +11,7 @@ import { analisar, transcrever } from './gemini.js';
 import { handleCommand } from './commands.js';
 import { registrarExemplo, exemplosPara, fatosDo, docsDo } from './knowledge.js';
 import { processarVisita } from './visitas.js';
+import { situacaoEstudo } from './estudo.js';
 
 // ---------- entrada do webhook ----------
 export async function handleWebhook(body) {
@@ -98,13 +99,20 @@ async function processar(d) {
     await linkContact(msg.authorAlt, msg.authorName, condoKey);
   }
 
+  const estudo = await situacaoEstudo(condoKey);
+
   if (msg.equipe) {
     // A resposta da equipe vira exemplo de estilo (antes de fechar a pendência)
-    await registrarExemplo({ ...chat, condo_key: condoKey }, msg).catch((e) => console.error('[aprendizado]', e.message));
+    await registrarExemplo({ ...chat, condo_key: condoKey }, msg, { emEstudo: estudo.estudando }).catch((e) => console.error('[aprendizado]', e.message));
     // A equipe respondeu: fecha a pendência citada, ou todas da conversa privada
     if (msg.quotedId) await resolveById(msg.quotedId);
     if (chat.kind === 'privado') await resolveChat(msg.chatJid);
     cancelarAnalise(msg.chatJid, chat.kind === 'privado');
+    return;
+  }
+
+  if (estudo.estudando) {
+    console.log(`[estudo] "${chat.name}" em estudo até ${estudo.fim.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}: só aprendendo`);
     return;
   }
 

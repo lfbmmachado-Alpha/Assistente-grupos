@@ -36,7 +36,15 @@ export async function initKnowledge() {
 
 // ---------- exemplos da equipe ----------
 // Chamado quando alguém da equipe escreve numa conversa monitorada.
-export async function registrarExemplo(chat, msg) {
+export async function salvarExemplo(condoKey, kind, pergunta, resposta, autor) {
+  await q(
+    `INSERT INTO exemplos (condo_key, chat_kind, pergunta, resposta, autor) VALUES ($1,$2,$3,$4,$5)`,
+    [condoKey, kind, String(pergunta).slice(0, 1500), String(resposta).slice(0, 2000), autor || null]
+  );
+}
+
+// emEstudo: sem pendências abertas, usa a última mensagem de morador das 2 horas anteriores
+export async function registrarExemplo(chat, msg, { emEstudo = false } = {}) {
   if (!msg.text || msg.text.length < 15 || msg.text.startsWith('!')) return;
   let alvo = null;
   if (msg.quotedId) {
@@ -46,6 +54,13 @@ export async function registrarExemplo(chat, msg) {
     alvo = (await q(
       `SELECT * FROM messages WHERE chat_jid = $1 AND from_me = FALSE AND status = 'pendente'
          AND ts > now() - interval '24 hours' ORDER BY ts DESC LIMIT 1`,
+      [msg.chatJid]
+    )).rows[0];
+  }
+  if (!alvo && emEstudo) {
+    alvo = (await q(
+      `SELECT * FROM messages WHERE chat_jid = $1 AND from_me = FALSE AND ts > now() - interval '2 hours'
+         AND LENGTH(text) >= 15 ORDER BY ts DESC LIMIT 1`,
       [msg.chatJid]
     )).rows[0];
   }
@@ -129,14 +144,15 @@ Responda SOMENTE com JSON:
 
 let aprendendo = false;
 
-export async function aprender({ forcar = false } = {}) {
+export async function aprender({ forcar = false, condos: apenas = null } = {}) {
   if (aprendendo) return { ocupado: true };
   aprendendo = true;
   const resumo = { condominios: 0, novos: 0, atualizados: 0, removidos: 0 };
   try {
     const teste = JSON.parse(await getSetting('test_condos', '[]'));
     const modo = await getSetting('mode', 'teste');
-    const condos = (await listCondos()).filter((c) => modo !== 'teste' || teste.includes(c.condo_key));
+    const condos = (await listCondos()).filter((c) =>
+      apenas ? apenas.includes(c.condo_key) : modo !== 'teste' || teste.includes(c.condo_key));
 
     for (const c of condos) {
       const chaveUlt = `kb_last_${c.condo_key}`;
