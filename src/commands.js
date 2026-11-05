@@ -158,7 +158,7 @@ export async function handleCommand(msg, suggestionGroup) {
         `❔ Não identificados: ${cont.outro || 0}${cont.outro ? ' (vou perguntar logo abaixo)' : ''}\n` +
         (saiu.rowCount ? `🚪 Saí de ${saiu.rowCount} grupo(s): ${saiu.rows.map((r) => r.name).join(', ')}\n` : '') + '\n' +
         `🏢 ${condos.length} condomínios identificados.\n` +
-        `Próximo passo: *!condominios nome* para achar um e *!teste incluir nome* para testar.`
+        `Próximo passo: confira com *!condominios* e depois envie *!estudar novos*.`
       );
       await perguntarNaoIdentificados();
       return true;
