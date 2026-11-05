@@ -106,7 +106,7 @@ export async function tratarResposta(msg) {
   const itens = linhas.map((l) => l.match(/^(\d+)[\s.)\-:]+(.+)$/)).filter(Boolean);
   // Só um grupo pendente: aceita a resposta sem número ("sim", "não", "torino síndico")
   const ids = Object.keys(perg);
-  if (!itens.length && ids.length === 1 && linhas.length === 1 &&
+  if (!itens.length && ids.length === 1 && linhas.length === 1 && linhas[0].length <= 40 && !linhas[0].includes('?') &&
       /^(sim|s|ok|certo|nao|não|n)\b|\b(s[ií]ndico|moradores?|conselho)\b/i.test(linhas[0])) {
     await responderUma(ids[0], linhas[0]);
     return true;
