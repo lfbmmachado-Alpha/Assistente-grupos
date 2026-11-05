@@ -67,30 +67,51 @@ export async function perguntarNaoIdentificados({ reperguntar = false } = {}) {
   if (reperguntar) for (const [id, p] of Object.entries(perg)) if (pendentes.some((g) => g.jid === p.jid)) delete perg[id];
   const conhecidos = await nomesConhecidos();
   await sendToSuggestionGroup(
-    `❔ *${pendentes.length} grupo(s) não identificado(s)*\n\nVou mandar um por um. *Responda cada mensagem* (arraste para o lado e escreva):\n` +
-    `✅ *sim* — se o meu palpite estiver certo\n✏️ *o nome e o tipo* — ex.: _torino síndico_, _cristiana moradores_\n🚫 *não* — se não for grupo de condomínio`
+    `❔ *${pendentes.length} grupo(s) não identificado(s)*\n\nCada um vem numerado. Responda aqui mesmo, *uma linha por grupo*, com o número na frente:\n` +
+    `✅ *1 sim* — o palpite está certo\n✏️ *2 torino síndico* — o nome e o tipo certos\n🚫 *3 não* — não é grupo de condomínio\n\n` +
+    `Pode mandar tudo numa mensagem só, ex.:\n_1 sim_\n_2 torino síndico_\n_3 não_`
   );
+  let numero = Math.max(0, ...Object.values(perg).map((p) => p.n || 0));
   for (const g of pendentes) {
+    numero++;
     const palpite = await adivinhar(g.name || '', conhecidos);
     const texto =
-      `❔ *${g.name || g.jid}*\n\n` +
+      `*${numero}.* ❔ *${g.name || g.jid}*\n` +
       (palpite
-        ? `Acho que é: ${ICONE[palpite.kind]} *${NOME_TIPO[palpite.kind]}* do *${palpite.condo_name}*\n\nResponda *sim*, o nome certo ou *não*.`
-        : `Não sei de qual condomínio é.\n\nResponda com o nome e o tipo (ex.: _torino síndico_) ou *não*.`);
+        ? `Acho que é: ${ICONE[palpite.kind]} ${NOME_TIPO[palpite.kind]} do *${palpite.condo_name}*\n➡️ _${numero} sim_ · _${numero} nome tipo_ · _${numero} não_`
+        : `Não sei de qual condomínio é.\n➡️ _${numero} nome tipo_ (ex.: _${numero} torino síndico_) · _${numero} não_`);
     const enviado = await sendToSuggestionGroup(texto);
     const id = enviado?.key?.id;
-    if (id) perg[id] = { jid: g.jid, nome: g.name, palpite };
+    if (id) perg[id] = { jid: g.jid, nome: g.name, palpite, n: numero };
   }
   await setSetting('identificar', JSON.stringify(perg));
   return pendentes.length;
 }
 
-// Resposta do Luiz citando uma pergunta. Devolve true se tratou.
+// Resposta do Luiz: "1 sim" / "2 torino síndico" / "3 não" (uma ou várias linhas), ou citando a pergunta.
 export async function tratarResposta(msg) {
-  if (!msg.quotedId) return false;
   const perg = await getPerguntas();
-  const p = perg[msg.quotedId];
-  if (!p) return false;
+  if (!Object.keys(perg).length) return false;
+  if (msg.quotedId && perg[msg.quotedId] && !/^\s*\d+\s/.test(msg.text)) {
+    await responderUma(msg.quotedId, msg.text);
+    return true;
+  }
+  const linhas = msg.text.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+  const itens = linhas.map((l) => l.match(/^(\d+)[\s.)\-:]+(.+)$/)).filter(Boolean);
+  if (!itens.length) return false;
+  for (const [, num, resposta] of itens) {
+    const id = Object.keys(perg).find((k) => perg[k].n === Number(num));
+    if (!id) { await sendToSuggestionGroup(`Não achei a pergunta *${num}*. Envie !identificar para ver a lista atual.`); continue; }
+    await responderUma(id, resposta);
+  }
+  return true;
+}
+
+async function responderUma(perguntaId, texto) {
+  const perg = await getPerguntas();
+  const p = perg[perguntaId];
+  if (!p) return;
+  const msg = { text: texto, quotedId: perguntaId };
 
   const t = normalize(msg.text);
   let kind, condo_key, condo_name;
@@ -98,13 +119,13 @@ export async function tratarResposta(msg) {
     await q(`UPDATE chats SET kind = 'ignorado', manual = TRUE WHERE jid = $1`, [p.jid]);
     delete perg[msg.quotedId];
     await setSetting('identificar', JSON.stringify(perg));
-    await sendToSuggestionGroup(`🚫 Ok, vou ignorar o grupo *${p.nome}*.`);
-    return true;
+    await sendToSuggestionGroup(`🚫 ${p.n}. Ok, vou ignorar o grupo *${p.nome}*.`);
+    return;
   }
   if (/^(sim|s|ok|isso|certo|correto|confirmo|exato|yes)\b/.test(t)) {
     if (!p.palpite) {
-      await sendToSuggestionGroup(`Para o grupo *${p.nome}* eu não tinha palpite. Responda com o nome e o tipo, ex.: _torino síndico_.`);
-      return true;
+      await sendToSuggestionGroup(`${p.n}. Para o grupo *${p.nome}* eu não tinha palpite. Responda com o nome e o tipo, ex.: _${p.n} torino síndico_.`);
+      return;
     }
     ({ kind, condo_key, condo_name } = p.palpite);
   } else {
@@ -112,7 +133,7 @@ export async function tratarResposta(msg) {
     kind = /\bsind/.test(t) ? 'sindico' : /\bconselh/.test(t) ? 'conselho' : /\bmorador/.test(t) ? 'moradores' : p.palpite?.kind || 'moradores';
     const nome = t.replace(/\b(sindicos?|sindico|conselho( fiscal)?|moradores?|grupo|do|da|de|e|o|a|tipo)\b/g, ' ').replace(/\s+/g, ' ').trim();
     if (!nome) {
-      if (!p.palpite) { await sendToSuggestionGroup('Faltou o nome do condomínio. Ex.: _torino síndico_.'); return true; }
+      if (!p.palpite) { await sendToSuggestionGroup(`${p.n}. Faltou o nome do condomínio. Ex.: _${p.n} torino síndico_.`); return; }
       ({ condo_key, condo_name } = p.palpite);
     } else {
       const conhecidos = await nomesConhecidos();
@@ -121,8 +142,8 @@ export async function tratarResposta(msg) {
       const parciais = conhecidos.filter((c) => c.condo_key.includes(chave) || chave.includes(c.condo_key));
       const achado = exato || (parciais.length === 1 ? parciais[0] : null);
       if (!achado && parciais.length > 1) {
-        await sendToSuggestionGroup(`Encontrei mais de um: ${parciais.slice(0, 10).map((c) => c.condo_name).join(', ')}.\nResponda de novo a pergunta com o nome mais completo.`);
-        return true;
+        await sendToSuggestionGroup(`${p.n}. Encontrei mais de um: ${parciais.slice(0, 10).map((c) => c.condo_name).join(', ')}.\nResponda de novo com o nome mais completo, ex.: _${p.n} ${parciais[0].condo_name.toLowerCase()} moradores_.`);
+        return;
       }
       condo_key = achado?.condo_key || chave;
       condo_name = achado?.condo_name || msg.text.replace(/\b(s[ií]ndicos?|conselho( fiscal)?|moradores?)\b/gi, '').trim();
@@ -133,6 +154,5 @@ export async function tratarResposta(msg) {
   delete perg[msg.quotedId];
   await setSetting('identificar', JSON.stringify(perg));
   const faltam = Object.keys(perg).length;
-  await sendToSuggestionGroup(`✅ *${p.nome}* → ${ICONE[kind]} ${NOME_TIPO[kind]} do *${condo_name}*` + (faltam ? `\n\nFaltam ${faltam}.` : '\n\n🎉 Todos os grupos identificados.'));
-  return true;
+  await sendToSuggestionGroup(`✅ ${p.n}. *${p.nome}* → ${ICONE[kind]} ${NOME_TIPO[kind]} do *${condo_name}*` + (faltam ? `  (faltam ${faltam})` : '\n\n🎉 Todos os grupos identificados.'));
 }
