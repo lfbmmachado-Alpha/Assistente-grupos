@@ -7,7 +7,7 @@ import {
   enviarPlanilha, semana, dataHoraBR,
 } from './visitas.js';
 import { getVistoriadores } from './util.js';
-import { perguntar } from './consulta.js';
+import { perguntar, limparConversa } from './consulta.js';
 import { perguntarNaoIdentificados } from './identificar.js';
 import { iniciarEstudo, importarHistorico, aprenderTudo, listarEstudos, liberar, alterarDias, resumoCondo } from './estudo.js';
 import {
@@ -34,7 +34,11 @@ const AJUDA = `🤖 *Comandos* (só neste grupo)
 !estudo — quem está estudando e o que já aprendeu
 !estudo liberar Nome — encerra o estudo e libera as sugestões
 
-*Perguntar à IA*
+*Conversar com a IA*
+Escreva normalmente aqui, sem "!" — ex.: _qual condomínio está mais delicado?_
+Citando um condomínio, ela foca nele — ex.: _como está o clima no Floresta?_
+!nova conversa — esquece o assunto anterior
+
 !perguntar Nome: sua pergunta — ex.: !perguntar torino: o que está pendente?
 !resumo Nome — o que está acontecendo no condomínio (últimos 7 dias)
 
@@ -523,6 +527,13 @@ export async function handleCommand(msg, suggestionGroup) {
         console.error('[perguntar]', e.message);
         await reply(`❌ Não consegui consultar agora: ${e.message}`);
       }
+      return true;
+    }
+
+    case 'nova':
+    case 'limpar': {
+      await limparConversa();
+      await reply('🧹 Ok, começando uma conversa nova.');
       return true;
     }
 

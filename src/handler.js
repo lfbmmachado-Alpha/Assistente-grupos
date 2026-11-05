@@ -13,6 +13,7 @@ import { registrarExemplo, exemplosPara, fatosDo, docsDo } from './knowledge.js'
 import { processarVisita } from './visitas.js';
 import { situacaoEstudo } from './estudo.js';
 import { tratarResposta, perguntarNaoIdentificados } from './identificar.js';
+import { conversar } from './consulta.js';
 
 // ---------- entrada do webhook ----------
 export async function handleWebhook(body) {
@@ -53,7 +54,25 @@ async function processar(d) {
   }
   // O grupo de sugestões nunca é analisado; ali só tratamos as respostas às perguntas de identificação
   if (msg.chatJid === suggestionGroup) {
-    if (msg.equipe) await tratarResposta(msg).catch((e) => console.error('[identificar]', e.message));
+    if (!msg.equipe || msg.fromMe) return;
+    try {
+      if (msg.audio) {
+        // pergunta por áudio: transcreve antes
+        const midia = msg.base64 ? { base64: msg.base64, mimetype: msg.audio.mimetype } : await getMediaBase64(msg.key);
+        const t = midia?.base64 ? await transcrever(midia.base64, midia.mimetype || msg.audio.mimetype) : '';
+        if (!t) return;
+        msg.text = t;
+        await sendToSuggestionGroup(`🎤 _Entendi:_ ${t}`);
+      }
+      if (await tratarResposta(msg)) return;
+      // Conversa livre: qualquer mensagem sua (sem "!") vira pergunta para a IA
+      if (msg.text.trim().length < 3 || /^\[(áudio|imagem|vídeo|documento)/.test(msg.text)) return;
+      const r = await conversar(msg.text);
+      await sendToSuggestionGroup(`🤖 ${r.resposta}`);
+    } catch (e) {
+      console.error('[conversa]', e.message);
+      await sendToSuggestionGroup(`❌ Não consegui responder agora: ${e.message}`);
+    }
     return;
   }
 
