@@ -50,6 +50,7 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_msg_chat_ts ON messages (chat_jid, ts DESC);
     CREATE INDEX IF NOT EXISTS idx_msg_status  ON messages (status, ts DESC);
     ALTER TABLE chats ADD COLUMN IF NOT EXISTS manual BOOLEAN DEFAULT FALSE;
+    ALTER TABLE chats ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT TRUE; -- FALSE = a IA saiu do grupo
 
     -- Compatibilidade com o banco da versão de 08/10, se ele for reaproveitado
     DO $$ BEGIN
@@ -99,7 +100,7 @@ export async function listCondos() {
            ARRAY_AGG(DISTINCT kind) AS kinds,
            BOOL_AND(enabled) AS enabled
     FROM chats
-    WHERE condo_key IS NOT NULL AND kind IN ('moradores','sindico','conselho')
+    WHERE condo_key IS NOT NULL AND kind IN ('moradores','sindico','conselho') AND COALESCE(ativo, TRUE)
     GROUP BY condo_key
     ORDER BY MIN(condo_name)`);
   return r.rows;

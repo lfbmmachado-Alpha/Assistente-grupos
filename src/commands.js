@@ -107,6 +107,13 @@ export async function handleCommand(msg, suggestionGroup) {
     case 'sincronizar': {
       await reply('🔄 Lendo seus grupos…');
       const grupos = (await fetchAllGroups()).filter((g) => g.jid !== suggestionGroup);
+      // Grupos de onde a IA saiu deixam de contar (o histórico fica guardado)
+      const presentes = grupos.map((g) => g.jid);
+      const saiu = await pool.query(
+        `UPDATE chats SET ativo = FALSE WHERE kind <> 'privado' AND COALESCE(ativo, TRUE) AND NOT (jid = ANY($1)) RETURNING name`,
+        [[...presentes, suggestionGroup]]
+      );
+      await pool.query(`UPDATE chats SET ativo = TRUE WHERE jid = ANY($1)`, [presentes]);
       const cont = { moradores: 0, sindico: 0, conselho: 0, outro: 0 };
       const trocas = new Map(); // chave antiga -> chave nova
 
@@ -148,7 +155,8 @@ export async function handleCommand(msg, suggestionGroup) {
       await reply(
         `✅ ${grupos.length} grupos lidos\n` +
         `👥 Moradores: ${cont.moradores}\n🧑‍💼 Síndico: ${cont.sindico}\n📊 Conselho: ${cont.conselho}\n` +
-        `❔ Não identificados: ${cont.outro || 0}${cont.outro ? ' (vou perguntar logo abaixo)' : ''}\n\n` +
+        `❔ Não identificados: ${cont.outro || 0}${cont.outro ? ' (vou perguntar logo abaixo)' : ''}\n` +
+        (saiu.rowCount ? `🚪 Saí de ${saiu.rowCount} grupo(s): ${saiu.rows.map((r) => r.name).join(', ')}\n` : '') + '\n' +
         `🏢 ${condos.length} condomínios identificados.\n` +
         `Próximo passo: *!condominios nome* para achar um e *!teste incluir nome* para testar.`
       );

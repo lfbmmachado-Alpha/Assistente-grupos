@@ -58,32 +58,38 @@ Responda SOMENTE JSON: {"condominio": "nome exatamente como na lista, ou vazio",
 
 // Pergunta sobre cada grupo fora do padrão que ainda não foi perguntado (ou todos, se reperguntar)
 export async function perguntarNaoIdentificados({ reperguntar = false } = {}) {
-  const grupos = (await q(`SELECT jid, name FROM chats WHERE kind = 'outro' ORDER BY name`)).rows;
+  const grupos = (await q(`SELECT jid, name FROM chats WHERE kind = 'outro' AND COALESCE(ativo, TRUE) ORDER BY name`)).rows;
   const perg = await getPerguntas();
   const jaPerguntados = new Set(Object.values(perg).map((p) => p.jid));
   const pendentes = grupos.filter((g) => reperguntar || !jaPerguntados.has(g.jid));
   if (!pendentes.length) return 0;
 
-  if (reperguntar) for (const [id, p] of Object.entries(perg)) if (pendentes.some((g) => g.jid === p.jid)) delete perg[id];
+  if (reperguntar) for (const id of Object.keys(perg)) delete perg[id]; // recomeça a numeração do 1
   const conhecidos = await nomesConhecidos();
-  await sendToSuggestionGroup(
-    `❔ *${pendentes.length} grupo(s) não identificado(s)*\n\nCada um vem numerado. Responda aqui mesmo, *uma linha por grupo*, com o número na frente:\n` +
-    `✅ *1 sim* — o palpite está certo\n✏️ *2 torino síndico* — o nome e o tipo certos\n🚫 *3 não* — não é grupo de condomínio\n\n` +
-    `Pode mandar tudo numa mensagem só, ex.:\n_1 sim_\n_2 torino síndico_\n_3 não_`
-  );
   let numero = Math.max(0, ...Object.values(perg).map((p) => p.n || 0));
+  const linhas = [];
   for (const g of pendentes) {
     numero++;
     const palpite = await adivinhar(g.name || '', conhecidos);
-    const texto =
-      `*${numero}.* ❔ *${g.name || g.jid}*\n` +
-      (palpite
-        ? `Acho que é: ${ICONE[palpite.kind]} ${NOME_TIPO[palpite.kind]} do *${palpite.condo_name}*\n➡️ _${numero} sim_ · _${numero} nome tipo_ · _${numero} não_`
-        : `Não sei de qual condomínio é.\n➡️ _${numero} nome tipo_ (ex.: _${numero} torino síndico_) · _${numero} não_`);
-    const enviado = await sendToSuggestionGroup(texto);
-    const id = enviado?.key?.id;
-    if (id) perg[id] = { jid: g.jid, nome: g.name, palpite, n: numero };
+    perg[`n${numero}`] = { jid: g.jid, nome: g.name, palpite, n: numero };
+    linhas.push(
+      `*${numero}.* ${g.name || g.jid}\n` +
+      (palpite ? `     → ${ICONE[palpite.kind]} ${NOME_TIPO[palpite.kind]} do *${palpite.condo_name}*?` : `     → ❓ não sei`)
+    );
   }
+  const cab = `❔ *${pendentes.length} grupo(s) para identificar*\n\n`;
+  const rod =
+    `\n\n*Responda numa mensagem só*, uma linha por grupo:\n` +
+    `_1 sim_ → meu palpite está certo\n_2 torino síndico_ → nome e tipo certos\n_3 não_ → não é condomínio`;
+  // uma mensagem só (divide apenas se for enorme)
+  const blocos = [];
+  let atual = cab;
+  for (const l of linhas) {
+    if ((atual + l).length > 3300) { blocos.push(atual); atual = ''; }
+    atual += (atual && atual !== cab ? '\n\n' : '') + l;
+  }
+  blocos.push(atual + rod);
+  for (const b of blocos) await sendToSuggestionGroup(b);
   await setSetting('identificar', JSON.stringify(perg));
   return pendentes.length;
 }
@@ -98,6 +104,13 @@ export async function tratarResposta(msg) {
   }
   const linhas = msg.text.split(/\n+/).map((l) => l.trim()).filter(Boolean);
   const itens = linhas.map((l) => l.match(/^(\d+)[\s.)\-:]+(.+)$/)).filter(Boolean);
+  // Só um grupo pendente: aceita a resposta sem número ("sim", "não", "torino síndico")
+  const ids = Object.keys(perg);
+  if (!itens.length && ids.length === 1 && linhas.length === 1 &&
+      /^(sim|s|ok|certo|nao|não|n)\b|\b(s[ií]ndico|moradores?|conselho)\b/i.test(linhas[0])) {
+    await responderUma(ids[0], linhas[0]);
+    return true;
+  }
   if (!itens.length) return false;
   for (const [, num, resposta] of itens) {
     const id = Object.keys(perg).find((k) => perg[k].n === Number(num));
