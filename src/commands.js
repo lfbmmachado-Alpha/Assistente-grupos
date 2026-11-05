@@ -8,6 +8,7 @@ import {
 } from './visitas.js';
 import { getVistoriadores } from './util.js';
 import { perguntar } from './consulta.js';
+import { perguntarNaoIdentificados } from './identificar.js';
 import { iniciarEstudo, importarHistorico, aprenderTudo, listarEstudos, liberar, alterarDias, resumoCondo } from './estudo.js';
 import {
   aprender, fatosDo, adicionarFato, removerFato, docsDo, salvarDocumento, removerDocumento, listarDocumentos, contarExemplos,
@@ -64,8 +65,8 @@ Planilha com legenda *!vistorias importar* — condomínios e vistoriadores
 !exemplos — respostas da equipe já aprendidas
 
 *Ajustes*
-!outros [nome] — grupos que não seguiram o padrão de nome
-!vincular N moradores|sindico|conselho Nome — classifica um grupo de !outros
+!identificar — pergunta de novo sobre os grupos não identificados
+   (responda a pergunta com *sim*, o nome certo ex. _torino síndico_, ou *não*)
 !ignorar Nome / !ativar Nome — para ou volta a monitorar um condomínio`;
 
 let ultimaListaPendentes = [];
@@ -147,10 +148,11 @@ export async function handleCommand(msg, suggestionGroup) {
       await reply(
         `✅ ${grupos.length} grupos lidos\n` +
         `👥 Moradores: ${cont.moradores}\n🧑‍💼 Síndico: ${cont.sindico}\n📊 Conselho: ${cont.conselho}\n` +
-        `❔ Fora do padrão: ${cont.outro} (veja com !outros)\n\n` +
+        `❔ Não identificados: ${cont.outro || 0}${cont.outro ? ' (vou perguntar logo abaixo)' : ''}\n\n` +
         `🏢 ${condos.length} condomínios identificados.\n` +
         `Próximo passo: *!condominios nome* para achar um e *!teste incluir nome* para testar.`
       );
+      await perguntarNaoIdentificados();
       return true;
     }
 
@@ -548,7 +550,13 @@ export async function handleCommand(msg, suggestionGroup) {
       return true;
     }
 
+    case 'identificar':
     case 'outros': {
+      if (!resto) {
+        const n = await perguntarNaoIdentificados({ reperguntar: true });
+        if (!n) await reply('🎉 Todos os grupos estão identificados.');
+        return true;
+      }
       const filtro = normalize(resto);
       const r = await pool.query(`SELECT jid, name FROM chats WHERE kind = 'outro' ORDER BY name`);
       ultimaListaOutros = r.rows.filter((g) => !filtro || normalize(g.name).includes(filtro));

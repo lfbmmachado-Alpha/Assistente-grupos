@@ -12,6 +12,7 @@ import { handleCommand } from './commands.js';
 import { registrarExemplo, exemplosPara, fatosDo, docsDo } from './knowledge.js';
 import { processarVisita } from './visitas.js';
 import { situacaoEstudo } from './estudo.js';
+import { tratarResposta, perguntarNaoIdentificados } from './identificar.js';
 
 // ---------- entrada do webhook ----------
 export async function handleWebhook(body) {
@@ -50,8 +51,11 @@ async function processar(d) {
       if (await handleCommand(msg, suggestionGroup)) return;
     }
   }
-  // O grupo de sugestões nunca é analisado
-  if (msg.chatJid === suggestionGroup) return;
+  // O grupo de sugestões nunca é analisado; ali só tratamos as respostas às perguntas de identificação
+  if (msg.chatJid === suggestionGroup) {
+    if (msg.equipe) await tratarResposta(msg).catch((e) => console.error('[identificar]', e.message));
+    return;
+  }
 
   const chat = await garantirChat(msg);
   if (!chat) return;
@@ -128,6 +132,7 @@ async function garantirChat(msg) {
       const existentes = (await listCondos()).map((c) => ({ condo_key: c.condo_key, condo_name: c.condo_name }));
       await upsertChat({ jid: msg.chatJid, name, ...unificar(classifyGroup(name), existentes) });
       chat = await getChat(msg.chatJid);
+      if (chat?.kind === 'outro') perguntarNaoIdentificados().catch((e) => console.error('[identificar]', e.message));
     }
   } else if (!chat || (!msg.equipe && msg.authorName && chat.name !== msg.authorName)) {
     await upsertChat({ jid: msg.chatJid, name: msg.equipe ? null : msg.authorName, kind: 'privado' });
