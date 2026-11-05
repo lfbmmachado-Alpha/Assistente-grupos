@@ -160,7 +160,7 @@ export async function handleCommand(msg, suggestionGroup) {
         `🏢 ${condos.length} condomínios identificados.\n` +
         `Próximo passo: confira com *!condominios* e depois envie *!estudar novos*.`
       );
-      await perguntarNaoIdentificados();
+      await perguntarNaoIdentificados({ reperguntar: true });
       return true;
     }
 
