@@ -563,7 +563,7 @@ export async function handleCommand(msg, suggestionGroup) {
       const s = await stats();
       const teste = await getList('test_condos');
       await reply(
-        `📊 *Status*\nModo: ${await getMode()}${(await getMode()) === 'teste' ? ` (${teste.length} condomínios)` : ''}\n` +
+        `📊 *Status* (versão ${process.env.RAILWAY_GIT_COMMIT_SHA ? process.env.RAILWAY_GIT_COMMIT_SHA.slice(0, 7) : 'local'})\nModo: ${await getMode()}${(await getMode()) === 'teste' ? ` (${teste.length} condomínios)` : ''}\n` +
         `Grupos conhecidos: ${s.grupos}\nMensagens nas últimas 24h: ${s.msgs_24h}\nPendências abertas: ${s.pendentes}`
       );
       return true;

@@ -54,7 +54,14 @@ async function processar(d) {
   }
   // O grupo de sugestões nunca é analisado; ali só tratamos as respostas às perguntas de identificação
   if (msg.chatJid === suggestionGroup) {
-    if (!msg.equipe || msg.fromMe) return;
+    if (!msg.equipe) return;
+    if (msg.fromMe) {
+      // Mensagem do próprio número da IA: pode ser você digitando no aparelho dela, ou uma resposta do sistema.
+      // As do sistema começam com emoji; espera um pouco para o id de envio ser registrado e confere de novo.
+      if (!/^[\p{L}\p{N}"'(¿?]/u.test(msg.text.trim())) return;
+      await new Promise((r) => setTimeout(r, 2000));
+      if (sentIds.has(msg.id)) return;
+    }
     try {
       if (msg.audio) {
         // pergunta por áudio: transcreve antes
