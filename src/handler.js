@@ -67,7 +67,10 @@ async function processar(d) {
       if (await tratarResposta(msg)) return;
       // Conversa livre: qualquer mensagem sua (sem "!") vira pergunta para a IA
       if (msg.text.trim().length < 3 || /^\[(áudio|imagem|vídeo|documento)/.test(msg.text)) return;
+      console.log(`[conversa] pergunta: ${msg.text.slice(0, 80)}`);
+      await sendToSuggestionGroup('🔎 Analisando…');
       const r = await conversar(msg.text);
+      console.log(`[conversa] respondida (${r.total} condomínio(s))`);
       await sendToSuggestionGroup(`🤖 ${r.resposta}`);
     } catch (e) {
       console.error('[conversa]', e.message);
