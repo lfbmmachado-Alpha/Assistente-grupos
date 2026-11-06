@@ -29,7 +29,9 @@ export async function isEquipe(msg) {
   const admins = await getList('admins');
   const vist = await getVistoriadores();
   const ids = [digitos(msg.authorJid), digitos(msg.authorAlt)].filter(Boolean);
-  const ok = ids.some((i) => admins.includes(i) || config.equipe.includes(i) || vist[i]);
+  let auto = [];
+  try { auto = JSON.parse(await getSetting('equipe_auto', '[]')); } catch {}
+  const ok = ids.some((i) => admins.includes(i) || config.equipe.includes(i) || vist[i] || auto.includes(i));
   // Em grupo o WhatsApp às vezes manda só o LID: quando vierem os dois, guarda o LID do vistoriador
   const [lid, tel] = ids;
   if (ids.length === 2 && vist[tel] && !vist[lid]) {

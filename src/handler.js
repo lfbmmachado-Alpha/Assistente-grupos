@@ -14,6 +14,7 @@ import { processarVisita } from './visitas.js';
 import { situacaoEstudo } from './estudo.js';
 import { tratarResposta, perguntarNaoIdentificados } from './identificar.js';
 import { conversar } from './consulta.js';
+import { aprenderEquipePelaAssinatura, revisarEmBreve } from './pendencias.js';
 
 // ---------- entrada do webhook ----------
 export async function handleWebhook(body) {
@@ -43,6 +44,7 @@ async function processar(d) {
 
   const suggestionGroup = await getSetting('suggestion_group');
 
+  await aprenderEquipePelaAssinatura(msg).catch(() => {});
   msg.equipe = await isEquipe(msg);
 
   // Comandos começam com "!". Só a equipe usa; a exceção é o primeiro !aqui (cadastra você).
@@ -140,6 +142,7 @@ async function processar(d) {
     // A equipe respondeu: fecha a pendência citada, ou todas da conversa privada
     if (msg.quotedId) await resolveById(msg.quotedId);
     if (chat.kind === 'privado') await resolveChat(msg.chatJid);
+    else revisarEmBreve(msg.chatJid); // a IA vê quais pendências essa resposta tratou, mesmo sem citação
     cancelarAnalise(msg.chatJid, chat.kind === 'privado');
     return;
   }

@@ -9,6 +9,7 @@ import {
 import { getVistoriadores } from './util.js';
 import { perguntar, limparConversa } from './consulta.js';
 import { perguntarNaoIdentificados } from './identificar.js';
+import { revisarTudo, contarAssuntos } from './pendencias.js';
 import { iniciarEstudo, importarHistorico, aprenderTudo, listarEstudos, liberar, alterarDias, resumoCondo } from './estudo.js';
 import {
   aprender, fatosDo, adicionarFato, removerFato, docsDo, salvarDocumento, removerDocumento, listarDocumentos, contarExemplos,
@@ -45,6 +46,7 @@ Citando um condomínio, ela foca nele — ex.: _como está o clima no Floresta?_
 *Dia a dia*
 !pendentes — o que está sem resposta
 !ok N — marca a pendência N como resolvida (!ok todos)
+!revisar — a IA revê todas as pendências e fecha as já respondidas
 !status — resumo do sistema
 !assinatura — quem assina as sugestões de cada condomínio
 
@@ -530,6 +532,14 @@ export async function handleCommand(msg, suggestionGroup) {
       return true;
     }
 
+    case 'revisar': {
+      await reply('🔄 Revisando as pendências de todos os grupos…');
+      const r = await revisarTudo({ forcar: true });
+      if (!r) { await reply('Já estou revisando. Tente em alguns minutos.'); return true; }
+      await reply(`✅ Revisão concluída: ${r.fechadas} assunto(s) fechado(s) em ${r.chats} grupo(s).\nPendências abertas agora: ${await contarAssuntos()} assunto(s).`);
+      return true;
+    }
+
     case 'nova':
     case 'limpar': {
       await limparConversa();
@@ -564,7 +574,7 @@ export async function handleCommand(msg, suggestionGroup) {
       const teste = await getList('test_condos');
       await reply(
         `📊 *Status* (versão ${process.env.RAILWAY_GIT_COMMIT_SHA ? process.env.RAILWAY_GIT_COMMIT_SHA.slice(0, 7) : 'local'})\nModo: ${await getMode()}${(await getMode()) === 'teste' ? ` (${teste.length} condomínios)` : ''}\n` +
-        `Grupos conhecidos: ${s.grupos}\nMensagens nas últimas 24h: ${s.msgs_24h}\nPendências abertas: ${s.pendentes}`
+        `Grupos conhecidos: ${s.grupos}\nMensagens nas últimas 24h: ${s.msgs_24h}\nPendências abertas: ${await contarAssuntos()} assunto(s)`
       );
       return true;
     }

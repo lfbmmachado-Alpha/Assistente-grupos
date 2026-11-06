@@ -146,6 +146,14 @@ por você (do seu número) ou, se preferir, pelo celular da IA.
 
 Ela continua **só sugerindo**: nunca escreve nos grupos dos condomínios.
 
+## Pendências (fechamento automático)
+Pedido, cobrança ou reclamação vira **pendência**. Ela fecha sozinha quando:
+- alguém da equipe responde no grupo sobre aquele assunto (não precisa citar a mensagem), ou
+- o morador indica que resolveu ("já arrumaram", "resolvido").
+A IA reconhece a equipe por quem **assina "Alpha Administradora"** (e pelos números cadastrados/vistoriadores).
+Ela revisa depois de cada resposta da equipe e, a cada hora, os grupos com pendências. A contagem é por **assunto**.
+`!revisar` força a revisão de tudo na hora.
+
 ## Período de estudo (condomínio novo)
 Ao incluir um condomínio (`!estudar Nome` ou `!teste incluir Nome`), a IA:
 1. importa o que já foi conversado nos grupos desde que o número entrou (o WhatsApp não entrega mensagens de antes);

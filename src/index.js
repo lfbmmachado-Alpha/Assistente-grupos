@@ -5,6 +5,7 @@ import { handleWebhook } from './handler.js';
 import { initKnowledge, aprender } from './knowledge.js';
 import { initVisitas, alertaSemanal } from './visitas.js';
 import { initEstudo, verificarEstudos } from './estudo.js';
+import { revisarTudo } from './pendencias.js';
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -39,5 +40,10 @@ setInterval(() => alertaSemanal().catch((e) => console.error('[visita]', e.messa
 
 // Estudo: libera as sugestões dos condomínios que terminaram o período de estudo
 setInterval(() => verificarEstudos().catch((e) => console.error('[estudo]', e.message)), 10 * 60 * 1000);
+
+// Pendências: a cada hora revisa os grupos com pendências e mensagens novas (primeira rodada 2 min após iniciar)
+const revisar = () => revisarTudo().catch((e) => console.error('[pendências]', e.message));
+setTimeout(revisar, 2 * 60 * 1000);
+setInterval(revisar, 60 * 60 * 1000);
 
 app.listen(config.port, () => console.log(`assistente-grupos ouvindo na porta ${config.port}`));

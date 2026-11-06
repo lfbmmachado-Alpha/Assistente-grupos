@@ -70,7 +70,7 @@ function citados(texto, condos) {
 async function panorama(condos, dias) {
   const keys = condos.map((c) => c.condo_key);
   const msgs = (await q(
-    `SELECT m.text, m.ts, m.author_name, m.from_me, m.status, c.condo_key, c.kind FROM messages m JOIN chats c ON c.jid = m.chat_jid
+    `SELECT m.text, m.ts, m.author_name, m.from_me, m.status, m.summary, c.condo_key, c.kind FROM messages m JOIN chats c ON c.jid = m.chat_jid
      WHERE c.condo_key = ANY($1) AND m.ts > now() - ($2 || ' days')::interval ORDER BY m.ts DESC LIMIT 6000`,
     [keys, String(dias)]
   )).rows;
@@ -85,13 +85,13 @@ async function panorama(condos, dias) {
   for (const c of condos) {
     const ms = msgs.filter((m) => m.condo_key === c.condo_key).slice(0, condos.length > 1 ? 80 : 600).reverse();
     const fs = fatos.filter((f) => f.condo_key === c.condo_key).slice(0, condos.length > 1 ? 15 : 80);
-    const pend = ms.filter((m) => m.status === 'pendente').length;
+    const pend = new Set(ms.filter((m) => m.status === 'pendente').map((m) => m.summary || m.text)).size;
     const vis = visitas.find((v) => v.condo_key === c.condo_key);
     blocos.push(
       `##### ${c.condo_name}\n` +
       `Mensagens no período: ${ms.length} · Pendências sem resposta: ${pend} · Última vistoria ordinária: ${vis?.ultima ? fmt(vis.ultima) : 'sem registro'}\n` +
       (fs.length ? `Base:\n${fs.map((f) => `- ${f.fato}`).join('\n')}\n` : '') +
-      (ms.length ? `Conversas:\n${ms.map((m) => `[${fmt(m.ts)}] (${m.kind}) ${m.from_me ? 'EQUIPE ALPHA' : m.author_name || 'Participante'}: ${String(m.text).slice(0, 300)}`).join('\n')}` : 'Conversas: (nenhuma no período)')
+      (ms.length ? `Conversas:\n${ms.map((m) => `[${fmt(m.ts)}] (${m.kind}) ${m.from_me || /alpha\s+(administradora|condom[ií]nios)/i.test(m.text || '') ? `EQUIPE ALPHA (${m.author_name || ''})` : m.author_name || 'Participante'}: ${String(m.text).slice(0, 300)}`).join('\n')}` : 'Conversas: (nenhuma no período)')
     );
   }
   return blocos.join('\n\n');
