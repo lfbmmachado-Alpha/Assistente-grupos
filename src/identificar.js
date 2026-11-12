@@ -218,6 +218,7 @@ export async function listarVinculos({ todos = false } = {}) {
     const n = i + 1;
     if (ICONE[g.kind]) return `*${n}.* ${g.name || g.jid}\n     → ${ICONE[g.kind]} ${NOME_TIPO[g.kind]} do *${g.condo_name}*`;
     if (g.kind === 'ignorado') return `*${n}.* ${g.name || g.jid}\n     → 🚫 ignorado (não é condomínio)`;
+    if (g.kind === 'interno') return `*${n}.* ${g.name || g.jid}\n     → 📤 grupo interno (recebe relatórios)`;
     return `*${n}.* ${g.name || g.jid}\n     → ❔ não identificado`;
   });
   const cab = `🔗 *Todas as vinculações (${todosGrupos.length} grupos)*\n${resumo}\n\n`;

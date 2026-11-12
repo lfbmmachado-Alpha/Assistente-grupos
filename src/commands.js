@@ -5,7 +5,7 @@ import { lerDocumento } from './gemini.js';
 import {
   relatorio, historico, linhaVisita, removerVisita, lancarManual, listarCarteira, importarCarteira,
   enviarPlanilha, semana, dataHoraBR, definirApelido, reprocessarSemana, diagnostico, verificarSemana, semGrupo,
-  removerDaCarteira, incluirNaCarteira, buscarNaCarteira,
+  removerDaCarteira, incluirNaCarteira, buscarNaCarteira, listarEnvios, salvarEnvio, removerEnvio, enviarRelatorioVistoriador,
 } from './visitas.js';
 import { getVistoriadores } from './util.js';
 import { perguntar, limparConversa } from './consulta.js';
@@ -64,6 +64,8 @@ Citando um condomínio, ela foca nele — ex.: _como está o clima no Floresta?_
 !visita Nome dd/mm hh:mm-hh:mm Vistoriador [extra motivo] — lança à mão
 !visita remover N — apaga a visita N de !vistorias Nome
 !vistoriadores — quem está cadastrado
+!envio Kesse = Condominios Kesse 19h — relatório diário do vistoriador num grupo
+!envios — envios programados (!envio testar N · !envio remover N)
 !carteira remover Nome, Nome — tira condomínios do quadro
 !carteira incluir Nome = Vistoriador — inclui ou troca o responsável
 !apelido nome no quadro = nome do grupo — liga um condomínio do quadro ao grupo (ex.: !apelido helena perez = helena borja)
@@ -514,6 +516,45 @@ export async function handleCommand(msg, suggestionGroup) {
       const saida = mh[2] ? dataHoraBR(args[iData], mh[2]) : null;
       await lancarManual({ condo_key: r.condo.condo_key, condo_nome: r.condo.condo_name, vistoriador, tipo: extra ? 'extraordinaria' : 'ordinaria', motivo, entrada, saida });
       await reply(`✍️ Visita lançada: *${r.condo.condo_name}* ${args[iData]} ${mh[1]}${mh[2] ? `–${mh[2]}` : ''} · ${vistoriador} · ${extra ? 'extraordinária' : 'ordinária'}${motivo ? ` (${motivo})` : ''}`);
+      return true;
+    }
+
+    case 'envio':
+    case 'envios': {
+      // !envio Kesse = Condominios Kesse 19h  ·  !envios  ·  !envio remover N  ·  !envio testar N
+      const sub = normalize(args[0] || '');
+      const lista = await listarEnvios();
+      const DIAS_N = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
+      const descr = (e, i) => `${i + 1}. *${e.vistoriador}* → ${e.nome} · todo dia${e.dias ? ` (${e.dias.map((d) => DIAS_N[d]).join(', ')})` : ''} às ${e.hora}`;
+      if (sub === 'remover' || sub === 'testar') {
+        const e = lista[Number(args[1]) - 1];
+        if (!e) { await reply('Número inválido. Veja a lista com !envios'); return true; }
+        if (sub === 'remover') { await removerEnvio(Number(args[1]) - 1); await reply(`➖ Envio removido: ${e.vistoriador} → ${e.nome}`); return true; }
+        await enviarRelatorioVistoriador(e);
+        await reply(`📤 Relatório de ${e.vistoriador} enviado agora para ${e.nome}.`);
+        return true;
+      }
+      if (!resto.includes('=')) {
+        await reply(lista.length
+          ? `📤 *Envios programados*\n${lista.map(descr).join('\n')}\n\n!envio testar N — envia agora · !envio remover N`
+          : '📤 Nenhum envio programado.\n\nUse: !envio Kesse = Condominios Kesse 19h\n(adicione a IA no grupo e mande !sincronizar antes)');
+        return true;
+      }
+      // "Kesse = Condominios Kesse 19h [seg-sab]"
+      const [vist, dir] = resto.split('=').map((x) => x.trim());
+      const mh = dir.match(/(\d{1,2})(?:[:h](\d{2}))?\s*h?\b(?!.*\d{1,2}[:h])/i);
+      const hora = mh ? `${mh[1].padStart(2, '0')}:${mh[2] || '00'}` : '19:00';
+      const semFds = /seg.{0,3}(sab|sex)/i.test(dir) ? (/sex/i.test(dir) ? [1, 2, 3, 4, 5] : [1, 2, 3, 4, 5, 6]) : null;
+      const nomeGrupo = dir.replace(/\b\d{1,2}([:h]\d{2})?\s*h?\b/gi, '').replace(/seg.{0,3}(sab|sex)\w*/i, '').trim();
+      const grupos = (await pool.query(`SELECT jid, name FROM chats WHERE jid LIKE '%@g.us'`)).rows;
+      const alvo = normalize(nomeGrupo);
+      const g = grupos.find((x) => normalize(x.name || '') === alvo) || grupos.filter((x) => normalize(x.name || '').includes(alvo))[0];
+      if (!g) { await reply(`Não achei o grupo "${nomeGrupo}". Adicione a IA no grupo, mande !sincronizar e tente de novo.`); return true; }
+      // o grupo é interno: não entra como condomínio nem é analisado
+      await pool.query(`UPDATE chats SET kind = 'interno', condo_key = NULL, condo_name = NULL, manual = TRUE WHERE jid = $1`, [g.jid]);
+      const e = { jid: g.jid, nome: g.name, vistoriador: vist, hora, dias: semFds };
+      await salvarEnvio(e);
+      await reply(`✅ Programado: relatório de *${vist}* no grupo *${g.name}* todo dia${semFds ? ' (sem fim de semana)' : ''} às *${hora}*.\nPara ver agora como fica: !envio testar ${(await listarEnvios()).length}`);
       return true;
     }
 

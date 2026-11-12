@@ -3,7 +3,7 @@ import { config } from './config.js';
 import { initDb, purgeOld } from './db.js';
 import { handleWebhook } from './handler.js';
 import { initKnowledge, aprender } from './knowledge.js';
-import { initVisitas, alertaSemanal } from './visitas.js';
+import { initVisitas, alertaSemanal, rodarEnvios } from './visitas.js';
 import { initEstudo, verificarEstudos } from './estudo.js';
 import { revisarTudo } from './pendencias.js';
 
@@ -37,6 +37,8 @@ setInterval(rodarAprendizado, 3 * 3600 * 1000);
 
 // Vistorias: na sexta às 12h envia os condomínios pendentes da semana
 setInterval(() => alertaSemanal().catch((e) => console.error('[visita]', e.message)), 60 * 1000);
+// Envios programados (ex.: relatório do Kesse no grupo dele às 19h)
+setInterval(() => rodarEnvios().catch((e) => console.error('[envio]', e.message)), 60 * 1000);
 
 // Estudo: libera as sugestões dos condomínios que terminaram o período de estudo
 setInterval(() => verificarEstudos().catch((e) => console.error('[estudo]', e.message)), 10 * 60 * 1000);

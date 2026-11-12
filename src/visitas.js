@@ -4,7 +4,7 @@ import { pool, getSetting, setSetting, listCondos } from './db.js';
 import { gerarJSON } from './gemini.js';
 import { sendToSuggestionGroup, digitos, getVistoriadores } from './util.js';
 import { classifyGroup, unificar, normalize } from './groups.js';
-import { sendDocument } from './evolution.js';
+import { sendDocument, sendText } from './evolution.js';
 import { melhorCasamento } from './casar.js';
 import { CARTEIRA_PADRAO, ORDEM_VISTORIADORES, SAIRAM } from './carteira-padrao.js';
 
@@ -374,7 +374,7 @@ function quando(v) {
 }
 
 // Relatório da semana: lista de mensagens prontas para enviar (resumo + uma mensagem por vistoriador)
-export async function relatorio(offset = 0, { apenasPendentes = false } = {}) {
+export async function relatorio(offset = 0, { apenasPendentes = false, so = null } = {}) {
   const { inicio, fim } = semana(offset);
   const { itens, fora, temCarteira, vistoriadores } = await universo();
   const vis = await visitasNoPeriodo(inicio, fim);
@@ -407,6 +407,16 @@ export async function relatorio(offset = 0, { apenasPendentes = false } = {}) {
   });
 
   const msgs = [];
+  if (so) {
+    // relatório de um vistoriador só (envio diário para o grupo dele)
+    const v = vistoriadores.find((x) => normalize(x) === normalize(so));
+    if (!v) return [`Não encontrei o vistoriador "${so}" no quadro.`];
+    const g = grupos.get(v);
+    const agora = new Date();
+    const cab = `📋 *Vistorias da semana*\n${diaSemana(inicio)} ${dataCurta(inicio)} a ${diaSemana(ultimoDia)} ${dataCurta(ultimoDia)}\nAtualizado: ${diaSemana(agora)} ${dataCurta(agora)} às ${hora(agora)}`;
+    vistoriadores.splice(0, vistoriadores.length, v);
+    msgs.push(cab);
+  } else
   msgs.push(
     `📋 *${apenasPendentes ? 'Vistorias pendentes' : 'Vistorias da semana'}*\n${diaSemana(inicio)} ${dataCurta(inicio)} a ${diaSemana(ultimoDia)} ${dataCurta(ultimoDia)}${hoje}\n\n` +
     `✅ *${ok}* de ${total} vistoriados (${pct(ok, total)}%)\n❌ *${pend}* pendentes\n` +
@@ -439,14 +449,14 @@ export async function relatorio(offset = 0, { apenasPendentes = false } = {}) {
     msgs.push(m.trim());
   }
 
-  if (!apenasPendentes && fora.length) {
+  if (!apenasPendentes && fora.length && !so) {
     const linhas = fora.map((c) => {
       const vs = porCondo.get(c.condo_key) || [];
       return `• ${c.condo_name}${vs.length ? ` (${vs.length} ida${vs.length > 1 ? 's' : ''})` : ''}`;
     });
     msgs.push(`❔ *Grupos fora da carteira (${fora.length})*\nTêm grupo com a IA, mas não estão no quadro de vistorias. Se for o mesmo condomínio com outro nome:\n_!apelido nome no quadro = nome do grupo_\n\n${linhas.join('\n')}`);
   }
-  if (!apenasPendentes && vis.some((v) => !v.saida)) msgs.push('_* saída estimada pela última mensagem do vistoriador no dia_');
+  if (!apenasPendentes && !so && vis.some((v) => !v.saida)) msgs.push('_* saída estimada pela última mensagem do vistoriador no dia_');
   // uma mensagem por bloco; quebra só se passar do limite do WhatsApp
   return msgs.flatMap((m) => {
     if (m.length <= 3800) return [m];
@@ -718,4 +728,43 @@ export async function buscarNaCarteira(nome) {
   const alvo = normalize(nome);
   const rows = (await q(`SELECT condo_nome, vistoriador FROM carteira WHERE ativo ORDER BY id`)).rows;
   return rows.find((x) => normalize(x.condo_nome) === alvo) || null;
+}
+
+// ---------- envios programados: relatório de um vistoriador para um grupo, todo dia num horário ----------
+async function getEnvios() {
+  try { return JSON.parse(await getSetting('envios', '[]')); } catch { return []; }
+}
+export async function listarEnvios() { return getEnvios(); }
+export async function salvarEnvio(e) {
+  const l = (await getEnvios()).filter((x) => !(x.jid === e.jid && normalize(x.vistoriador) === normalize(e.vistoriador)));
+  l.push(e);
+  await setSetting('envios', JSON.stringify(l));
+}
+export async function removerEnvio(i) {
+  const l = await getEnvios();
+  const [r] = l.splice(i, 1);
+  await setSetting('envios', JSON.stringify(l));
+  return r;
+}
+export async function enviarRelatorioVistoriador(e) {
+  const msgs = await relatorio(0, { so: e.vistoriador });
+  for (const m of msgs) await sendText(e.jid, m);
+}
+export async function rodarEnvios() {
+  const agora = new Date(Date.now() - OFFSET);
+  const hoje = agora.toISOString().slice(0, 10);
+  for (const e of await getEnvios()) {
+    const [h, m] = String(e.hora).split(':').map(Number);
+    if (agora.getUTCHours() * 60 + agora.getUTCMinutes() < h * 60 + (m || 0)) continue;
+    if (e.dias && !e.dias.includes(agora.getUTCDay())) continue;
+    const chave = `envio_${e.jid}_${normalize(e.vistoriador)}_${hoje}`;
+    if (await getSetting(chave)) continue;
+    await setSetting(chave, new Date().toISOString());
+    try {
+      await enviarRelatorioVistoriador(e);
+      console.log(`[envio] relatório de ${e.vistoriador} enviado para ${e.nome}`);
+    } catch (err) {
+      console.error('[envio]', err.message);
+    }
+  }
 }
