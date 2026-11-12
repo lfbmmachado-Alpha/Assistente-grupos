@@ -5,6 +5,7 @@ import { lerDocumento } from './gemini.js';
 import {
   relatorio, historico, linhaVisita, removerVisita, lancarManual, listarCarteira, importarCarteira,
   enviarPlanilha, semana, dataHoraBR, definirApelido, reprocessarSemana, diagnostico, verificarSemana, semGrupo,
+  removerDaCarteira, incluirNaCarteira, buscarNaCarteira,
 } from './visitas.js';
 import { getVistoriadores } from './util.js';
 import { perguntar, limparConversa } from './consulta.js';
@@ -63,6 +64,8 @@ Citando um condomínio, ela foca nele — ex.: _como está o clima no Floresta?_
 !visita Nome dd/mm hh:mm-hh:mm Vistoriador [extra motivo] — lança à mão
 !visita remover N — apaga a visita N de !vistorias Nome
 !vistoriadores — quem está cadastrado
+!carteira remover Nome, Nome — tira condomínios do quadro
+!carteira incluir Nome = Vistoriador — inclui ou troca o responsável
 !apelido nome no quadro = nome do grupo — liga um condomínio do quadro ao grupo (ex.: !apelido helena perez = helena borja)
 Planilha com legenda *!vistorias importar* — condomínios e vistoriadores
 
@@ -511,6 +514,31 @@ export async function handleCommand(msg, suggestionGroup) {
       const saida = mh[2] ? dataHoraBR(args[iData], mh[2]) : null;
       await lancarManual({ condo_key: r.condo.condo_key, condo_nome: r.condo.condo_name, vistoriador, tipo: extra ? 'extraordinaria' : 'ordinaria', motivo, entrada, saida });
       await reply(`✍️ Visita lançada: *${r.condo.condo_name}* ${args[iData]} ${mh[1]}${mh[2] ? `–${mh[2]}` : ''} · ${vistoriador} · ${extra ? 'extraordinária' : 'ordinária'}${motivo ? ` (${motivo})` : ''}`);
+      return true;
+    }
+
+    case 'carteira': {
+      // !carteira remover Nome  ·  !carteira incluir Nome = Vistoriador  ·  !carteira (resumo)
+      const sub = normalize(args[0] || '');
+      const corpo = args.slice(1).join(' ');
+      if (sub === 'remover' || sub === 'tirar' || sub === 'excluir') {
+        const nomes = corpo.split(/[,;\n]+/).map((x) => x.trim()).filter(Boolean);
+        const saida = [];
+        for (const n of nomes) {
+          const r = await removerDaCarteira(n);
+          saida.push(r.length ? `➖ ${r[0]}` : `❓ "${n}" não está no quadro (confira o nome com !vistoriadores)`);
+        }
+        await reply(saida.join('\n') || 'Use: !carteira remover Nome (vários separados por vírgula)');
+        return true;
+      }
+      if (sub === 'incluir' || sub === 'trocar' || sub === 'mover') {
+        const [nome, vist] = corpo.split('=').map((x) => (x || '').trim());
+        if (!nome || !vist) { await reply('Use: !carteira incluir Nome do condomínio = Vistoriador\nEx.: !carteira incluir Viena C = Kesse'); return true; }
+        const r = await incluirNaCarteira(nome, vist);
+        await reply(r === 'trocado' ? `🔁 ${nome} agora é do(a) *${vist}*` : `➕ ${nome} incluído no quadro, com *${vist}*`);
+        return true;
+      }
+      await reply('*Quadro de vistorias*\n!vistoriadores — quantos condomínios cada um tem\n!carteira remover Nome, Nome — tira do quadro\n!carteira incluir Nome = Vistoriador — inclui ou troca o responsável');
       return true;
     }
 

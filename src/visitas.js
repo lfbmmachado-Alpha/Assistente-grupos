@@ -6,7 +6,7 @@ import { sendToSuggestionGroup, digitos, getVistoriadores } from './util.js';
 import { classifyGroup, unificar, normalize } from './groups.js';
 import { sendDocument } from './evolution.js';
 import { melhorCasamento } from './casar.js';
-import { CARTEIRA_PADRAO, ORDEM_VISTORIADORES } from './carteira-padrao.js';
+import { CARTEIRA_PADRAO, ORDEM_VISTORIADORES, SAIRAM } from './carteira-padrao.js';
 
 const q = (sql, params) => pool.query(sql, params);
 const TZ = 'America/Sao_Paulo';
@@ -21,6 +21,19 @@ export async function initVisitas() {
       for (const c of lista) await q('INSERT INTO carteira (condo_nome, vistoriador) VALUES ($1, $2)', [c, v]);
     }
     console.log('[visita] carteira padrão carregada');
+  }
+  // uma vez só: tira do quadro e para de monitorar os grupos desses condomínios
+  // (dá para voltar com !carteira incluir e !ativar Nome)
+  if (!(await getSetting('sairam_aplicado'))) {
+    for (const nome of SAIRAM) await removerDaCarteira(nome);
+    const condos = await listCondos();
+    let ign = []; try { ign = JSON.parse(await getSetting('ignored_condos', '[]')); } catch {}
+    for (const nome of SAIRAM) {
+      const c = melhorCasamento(nome, condos);
+      if (c && !ign.includes(c.condo_key)) ign.push(c.condo_key);
+    }
+    await setSetting('ignored_condos', JSON.stringify(ign));
+    await setSetting('sairam_aplicado', new Date().toISOString());
   }
   // Correção (uma vez por inicialização, idempotente): semana sem ordinária, mas com visita que mencionou
   // "vistoria" → a primeira delas passa a ser a ordinária da semana
@@ -685,4 +698,24 @@ export async function semGrupo() {
   }
   blocos.push(`Para os ⚠️ que não têm grupo: adicione o número da IA no grupo e mande *!sincronizar*.`);
   return blocos;
+}
+
+// ---------- manutenção da carteira ----------
+export async function removerDaCarteira(nome) {
+  const alvo = normalize(nome);
+  const r = (await q(`SELECT id, condo_nome FROM carteira WHERE ativo`)).rows.filter((x) => normalize(x.condo_nome) === alvo);
+  for (const x of r) await q(`UPDATE carteira SET ativo = FALSE WHERE id = $1`, [x.id]);
+  return r.map((x) => x.condo_nome);
+}
+export async function incluirNaCarteira(nome, vistoriador) {
+  const ja = (await q(`SELECT id FROM carteira WHERE ativo`)).rows.length &&
+    (await q(`SELECT id, condo_nome FROM carteira WHERE ativo`)).rows.find((x) => normalize(x.condo_nome) === normalize(nome));
+  if (ja) await q(`UPDATE carteira SET vistoriador = $2 WHERE id = $1`, [ja.id, vistoriador]);
+  else await q(`INSERT INTO carteira (condo_nome, vistoriador) VALUES ($1, $2)`, [nome, vistoriador]);
+  return ja ? 'trocado' : 'incluido';
+}
+export async function buscarNaCarteira(nome) {
+  const alvo = normalize(nome);
+  const rows = (await q(`SELECT condo_nome, vistoriador FROM carteira WHERE ativo ORDER BY id`)).rows;
+  return rows.find((x) => normalize(x.condo_nome) === alvo) || null;
 }

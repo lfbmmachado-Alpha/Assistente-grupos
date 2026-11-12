@@ -4,9 +4,9 @@ export const CARTEIRA_PADRAO = {
   Carlos: ['Alvaro Cesar', 'Ametista', 'Ana Clara', 'Antares', 'Augustus I', 'Betel', 'Carvalho', 'Eny', 'Flavia Cristina', 'Floresta',
     'Helena Perez', 'Josina', 'Margaret', 'Mariangela', 'Marqueza', 'Mary', 'Minas', 'Minas das Esmeraldas', 'Mont Alto', 'Olivia Maria',
     'Portal', 'Regina', 'Renascença', 'Rita Maria', 'Zico Paiva'],
-  Nathan: ['Abner', 'Chácara', 'Flora Bandeira', 'Itaobim', 'João de Moura', 'Leste', 'Marilia de Dirceu', 'Meraki', 'Serra da Moeda',
+  Nathan: ['Abner', 'Chácara', 'Flora Bandeira', 'Itaobim', 'João de Moura', 'Leste', 'Marilia de Dirceu', 'Serra da Moeda',
     'SL Santa Ines', 'Paula Beatriz'],
-  Leandro: ['AG Olimpo', 'Alice Nacif', 'Beatriz', 'Belinha Ferrari', 'Cecilia Lima', 'CHR', 'Di Cavalcanti', 'Dona Conceição',
+  Leandro: ['AG Olimpo', 'Alice Nacif', 'Beatriz', 'Cecilia Lima', 'CHR', 'Di Cavalcanti', 'Dona Conceição',
     'Fabiano Cançado', 'Giovanna', 'Green Ville', 'Ipê Amarelo', 'Jabuticabeiras', 'Jose Justino', 'Living Office', 'Maria da Conceição',
     'Marrocos', 'Montmarte', 'Nicolau Calil', 'Serra Dourada', 'Souza Bastos', 'Villa Trocoli'],
   Samuel: ['Alphaville', 'Cirrus', 'Cooperar', 'Cristiana', 'De Paula Ribeiro', 'Duarte', 'Efigenia', 'Janete', 'Josephina', 'Leucas',
@@ -15,6 +15,9 @@ export const CARTEIRA_PADRAO = {
   Ederson: ['Toscana'],
   Kesse: ['Juventino', 'Kanaã', 'Barão de Mauá', 'Correia de Almeida', 'Dona Eulinda', 'Ida Cristina', 'Iohana', 'Isabela',
     'Jefferson Maria', 'Lilia', 'Malibu', 'Maria Eustela', 'Orquideas', 'Ouro Preto', 'Palmares III', 'Queluz', 'Savoy',
-    'Serra do Capivari', 'Sol', 'Solar das Montanhas', 'Ulysses', 'Viena B', 'Viena C', 'Viena D'],
+    'Serra do Capivari', 'Sol', 'Solar das Montanhas', 'Ulysses', 'Viena B', 'Viena D'],
 };
 export const ORDEM_VISTORIADORES = ['Carlos', 'Nathan', 'Leandro', 'Samuel', 'Ederson', 'Kesse'];
+
+// Condomínios que saíram da carteira (desativados também em bancos que já tinham a carteira carregada)
+export const SAIRAM = ['Belinha Ferrari', 'Meraki', 'Viena C'];
