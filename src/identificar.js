@@ -176,23 +176,52 @@ async function responderUma(perguntaId, texto) {
 
 // ---------- lista de vinculações e correção direta ----------
 let ultimaLista = [];
+let ultimaListaTs = 0;
 
-export async function listarVinculos() {
-  ultimaLista = (await q(
+// todos=false: só os sem vínculo, com a resposta pronta para copiar, editar e devolver
+export async function listarVinculos({ todos = false } = {}) {
+  const todosGrupos = (await q(
     `SELECT jid, name, kind, condo_key, condo_name FROM chats
      WHERE kind <> 'privado' AND COALESCE(ativo, TRUE)
      ORDER BY CASE WHEN kind IN ('moradores','sindico','conselho') THEN 0 WHEN kind = 'outro' THEN 1 ELSE 2 END,
               condo_name NULLS LAST, kind, name`
   )).rows;
-  const linhas = ultimaLista.map((g, i) => {
+  const vinc = todosGrupos.filter((g) => ICONE[g.kind]).length;
+  const sem = todosGrupos.filter((g) => g.kind === 'outro');
+  const ign = todosGrupos.filter((g) => g.kind === 'ignorado').length;
+  const resumo = `✅ ${vinc} vinculados · ❔ ${sem.length} sem vínculo · 🚫 ${ign} ignorados`;
+
+  ultimaListaTs = Date.now();
+  if (!todos) {
+    ultimaLista = sem;
+    await setSetting('identificar', '{}'); // as perguntas antigas viram esta lista
+    if (!sem.length) return [`🔗 *Vinculações*\n${resumo}\n\n🎉 Nenhum grupo sem vínculo.\n\nPara ver todos: *!vinculos todos*`];
+    const conhecidos = await nomesConhecidos();
+    const linhas = [];
+    const pronta = [];
+    for (let i = 0; i < sem.length; i++) {
+      const g = sem[i];
+      const p = await adivinhar(g.name || '', conhecidos);
+      linhas.push(`*${i + 1}.* ${g.name || g.jid}\n     → ${p ? `${ICONE[p.kind]} ${NOME_TIPO[p.kind]} do *${p.condo_name}*?` : '❓ não sei'}`);
+      pronta.push(`${i + 1} ${p ? `${p.condo_name.toLowerCase()} ${NOME_TIPO[p.kind]}` : 'NOME tipo'}`);
+    }
+    return [
+      `🔗 *Grupos sem vínculo (${sem.length})*\n${resumo}\n\n${linhas.join('\n')}\n\n` +
+      `👇 Na próxima mensagem vai a resposta pronta. *Copie, corrija o que estiver errado e me envie de volta.*\n` +
+      `Tipos: *moradores*, *síndico*, *conselho* ou *não* (não é condomínio). Nomes certos: *!modelos*`,
+      `✏️ Resposta pronta (copie, corrija e envie):\n${pronta.join('\n')}`,
+    ];
+  }
+
+  ultimaLista = todosGrupos;
+  const linhas = todosGrupos.map((g, i) => {
     const n = i + 1;
     if (ICONE[g.kind]) return `*${n}.* ${g.name || g.jid}\n     → ${ICONE[g.kind]} ${NOME_TIPO[g.kind]} do *${g.condo_name}*`;
     if (g.kind === 'ignorado') return `*${n}.* ${g.name || g.jid}\n     → 🚫 ignorado (não é condomínio)`;
     return `*${n}.* ${g.name || g.jid}\n     → ❔ não identificado`;
   });
-  const vinculados = ultimaLista.filter((g) => ICONE[g.kind]).length;
-  const cab = `🔗 *Vinculações (${ultimaLista.length} grupos)*\n✅ ${vinculados} vinculados · ❔ ${ultimaLista.filter((g) => g.kind === 'outro').length} sem vínculo · 🚫 ${ultimaLista.filter((g) => g.kind === 'ignorado').length} ignorados\n\n`;
-  const rod = `\n\n*Para corrigir*, mande o número e o certo, uma linha por grupo:\n_!vinculo 5 torino síndico_\n_!vinculo 8 valmir moradores_\n_!vinculo 12 não_ (não é condomínio)`;
+  const cab = `🔗 *Todas as vinculações (${todosGrupos.length} grupos)*\n${resumo}\n\n`;
+  const rod = `\n\n*Para corrigir*, mande o número e o certo (uma linha por grupo):\n_!vinculo 5 torino síndico_ · _!vinculo 7 não_`;
   const blocos = [];
   let atual = cab;
   for (const l of linhas) {
@@ -203,14 +232,40 @@ export async function listarVinculos() {
   return blocos;
 }
 
-// "!vinculo 5 torino síndico" (aceita várias linhas)
-export async function corrigirVinculos(texto) {
-  if (!ultimaLista.length) await listarVinculos(); // garante a numeração
+// Guia: modelos de comando, tipos aceitos e os nomes de condomínio válidos
+export async function modelos() {
+  const nomes = (await nomesConhecidos()).map((c) => c.condo_name).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  const guia =
+    `📘 *Modelos para vincular grupos*\n\n` +
+    `*1.* Veja o que falta: *!vinculos*\n` +
+    `*2.* Copie a resposta pronta que eu mando, corrija e envie de volta.\n\n` +
+    `*Formato:* !vinculo NÚMERO NOME TIPO\n` +
+    `• _!vinculo 1 torino moradores_\n• _!vinculo 2 torino síndico_\n• _!vinculo 3 floresta conselho_\n• _!vinculo 4 não_  (não é condomínio)\n\n` +
+    `*Tipos:*\n👥 *moradores* — grupo geral do condomínio\n🧑‍💼 *síndico* — grupo interno com o síndico\n📊 *conselho* — grupo do conselho\n🚫 *não* — não é de condomínio\n\n` +
+    `*Nome:* pode ser parte do nome, sem acento (ex.: _helena_, _jabuticabeiras_). Os nomes válidos vão na próxima mensagem.\n\n` +
+    `*Ver tudo:* !vinculos todos`;
+  const lista = `🏢 *Nomes de condomínio (${nomes.length})*\n${nomes.join('\n')}`;
+  return [guia, lista.slice(0, 3900)];
+}
+
+// Resposta à lista (sem "!"): linhas "1 torino moradores". Vale por 2 horas depois do !vinculos.
+export async function respostaVinculos(texto) {
+  if (!ultimaLista.length || Date.now() - ultimaListaTs > 2 * 3600 * 1000) return false;
+  const linhas = texto.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+  if (!linhas.some((l) => /^\d+[\s.)\-:]+\S/.test(l))) return false;
+  await corrigirVinculos(texto, { silencioso: true });
+  return true;
+}
+
+// "!vinculo 5 torino síndico" ou "5 torino síndico" (aceita várias linhas)
+export async function corrigirVinculos(texto, { silencioso = false } = {}) {
+  if (!ultimaLista.length) await listarVinculos({ todos: true }); // garante a numeração
   const linhas = texto.split(/\n+/).map((l) => l.replace(/^!v[ií]nculos?\s*/i, '').trim()).filter(Boolean);
   let feitos = 0;
   for (const l of linhas) {
     const m = l.match(/^(\d+)[\s.)\-:]+(.+)$/);
-    if (!m) { await sendToSuggestionGroup(`Não entendi "${l}". Use: _!vinculo 5 torino síndico_`); continue; }
+    if (!m) { if (!silencioso) await sendToSuggestionGroup(`Não entendi "${l}". Use: _!vinculo 5 torino síndico_`); continue; }
+    if (/^nome tipo$/i.test(m[2].trim())) { await sendToSuggestionGroup(`${m[1]}. Faltou trocar "NOME tipo" pelo condomínio, ex.: _${m[1]} torino moradores_.`); continue; }
     const g = ultimaLista[Number(m[1]) - 1];
     if (!g) { await sendToSuggestionGroup(`Não existe o número ${m[1]}. Mande !vinculos para ver a lista.`); continue; }
     const perg = await getPerguntas();

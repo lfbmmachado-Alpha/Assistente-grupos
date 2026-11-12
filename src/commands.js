@@ -8,7 +8,7 @@ import {
 } from './visitas.js';
 import { getVistoriadores } from './util.js';
 import { perguntar, limparConversa } from './consulta.js';
-import { perguntarNaoIdentificados, listarVinculos, corrigirVinculos } from './identificar.js';
+import { perguntarNaoIdentificados, listarVinculos, corrigirVinculos, modelos } from './identificar.js';
 import { revisarTudo, contarAssuntos } from './pendencias.js';
 import { iniciarEstudo, importarHistorico, aprenderTudo, listarEstudos, liberar, alterarDias, resumoCondo } from './estudo.js';
 import {
@@ -71,7 +71,9 @@ Planilha com legenda *!vistorias importar* — condomínios e vistoriadores
 !exemplos — respostas da equipe já aprendidas
 
 *Ajustes*
-!vinculos — lista todos os grupos e a qual condomínio cada um está ligado
+!vinculos — grupos sem vínculo, com a resposta pronta para corrigir
+!vinculos todos — todos os grupos e seus condomínios
+!modelos — modelos de comando e nomes de condomínio válidos
 !vinculo N nome tipo — corrige um grupo (ex.: !vinculo 5 torino síndico · !vinculo 7 não)
 !identificar — pergunta de novo sobre os grupos não identificados
    (responda a pergunta com *sim*, o nome certo ex. _torino síndico_, ou *não*)
@@ -542,7 +544,14 @@ export async function handleCommand(msg, suggestionGroup) {
         await corrigirVinculos(texto);
         return true;
       }
-      for (const m of await listarVinculos()) await reply(m);
+      for (const m of await listarVinculos({ todos: normalize(resto) === 'todos' })) await reply(m);
+      return true;
+    }
+
+    case 'modelos':
+    case 'modelo':
+    case 'nomes': {
+      for (const m of await modelos()) await reply(m);
       return true;
     }
 

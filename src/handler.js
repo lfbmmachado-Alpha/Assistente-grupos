@@ -12,7 +12,7 @@ import { handleCommand } from './commands.js';
 import { registrarExemplo, exemplosPara, fatosDo, docsDo } from './knowledge.js';
 import { processarVisita } from './visitas.js';
 import { situacaoEstudo } from './estudo.js';
-import { tratarResposta, perguntarNaoIdentificados } from './identificar.js';
+import { tratarResposta, perguntarNaoIdentificados, respostaVinculos } from './identificar.js';
 import { conversar } from './consulta.js';
 import { aprenderEquipePelaAssinatura, revisarEmBreve } from './pendencias.js';
 
@@ -74,6 +74,7 @@ async function processar(d) {
         await sendToSuggestionGroup(`🎤 _Entendi:_ ${t}`);
       }
       if (await tratarResposta(msg)) return;
+      if (await respostaVinculos(msg.text)) return;
       // Conversa livre: qualquer mensagem sua (sem "!") vira pergunta para a IA
       if (msg.text.trim().length < 3 || /^\[(áudio|imagem|vídeo|documento)/.test(msg.text)) return;
       console.log(`[conversa] pergunta: ${msg.text.slice(0, 80)}`);
