@@ -101,7 +101,25 @@ export function variantesTelefone(tel) {
 export async function nomeVistoriador(msg) {
   const vist = await getVistoriadores();
   for (const id of [digitos(msg.authorAlt), digitos(msg.authorJid)].filter(Boolean)) if (vist[id]) return vist[id];
-  return (msg.authorName || 'Equipe').split(' ')[0];
+  return (await vistoriadorPeloNome(msg.authorName)) || (msg.authorName || 'Equipe').split(' ')[0];
+}
+
+// Nome do WhatsApp começa com o nome de um vistoriador do quadro? ("Ederson Silva" → Ederson)
+export async function vistoriadorPeloNome(nome) {
+  const primeiro = normalize(nome || '').split(' ')[0];
+  if (!primeiro) return null;
+  const r = await q(`SELECT DISTINCT vistoriador FROM carteira WHERE ativo AND vistoriador IS NOT NULL`);
+  return r.rows.map((x) => x.vistoriador).find((v) => normalize(v).split(' ')[0] === primeiro) || null;
+}
+
+// Guarda o número/LID de quem foi reconhecido como vistoriador pelo nome
+async function aprenderVistoriador(msg, nome) {
+  const ids = [digitos(msg.authorJid), digitos(msg.authorAlt)].filter(Boolean);
+  if (!ids.length) return;
+  const vist = await getVistoriadores();
+  let mudou = false;
+  for (const id of ids) if (!vist[id]) { vist[id] = nome; mudou = true; }
+  if (mudou) { await setSetting('vistoriadores', JSON.stringify(vist)); console.log(`[visita] ${nome} reconhecido pelo nome`); }
 }
 
 // ---------- detecção nas mensagens ----------
@@ -114,6 +132,7 @@ Classifique a mensagem do funcionário:
 - "durante": relato feito no local durante a visita ("verifiquei a bomba", "segue foto do hall"), sem aviso de chegada ou saída.
 - "nenhum": qualquer outra coisa: visita FUTURA ("passo aí amanhã às 10h"), resposta a morador, cobrança, comunicado, ou quem claramente não está no local.
 tipo: "extraordinaria" se indicar visita fora da rotina (emergência, vazamento, acompanhar obra ou serviço, assembleia, reunião, atender chamado); "ordinaria" se for vistoria de rotina; "indefinido" se não der para saber.
+Se o autor claramente NÃO for funcionário da administradora (um morador falando de si), use "nenhum".
 Responda SOMENTE JSON: {"evento":"entrada|saida|durante|nenhum","tipo":"ordinaria|extraordinaria|indefinido","motivo":"poucas palavras ou vazio"}`;
 
 async function visitaAberta(condoKey, vistoriador, ts) {
@@ -143,9 +162,12 @@ async function definirTipo(condoKey, tipoIA, ts, texto = '') {
 export async function processarVisita(chat, condoKey, msg) {
   const vistoriador = await nomeVistoriador(msg);
   const ts = msg.ts;
+  // mesma mensagem já registrada (reprocessamento)
+  const ja = await q(`SELECT 1 FROM visitas WHERE condo_key = $1 AND (entrada = $2 OR saida = $2) LIMIT 1`, [condoKey, ts]);
+  if (ja.rows.length) return 'repetida';
   const aberta = await visitaAberta(condoKey, vistoriador, ts);
   if (aberta) await q(`UPDATE visitas SET ultima_atividade = $2 WHERE id = $1`, [aberta.id, ts]);
-  if (!PREFILTRO.test(msg.text)) return;
+  if (!PREFILTRO.test(msg.text)) return 'nenhum';
 
   const r = await gerarJSON(INSTR_VISITA,
     `Funcionário: ${vistoriador}\nCondomínio: ${chat.condo_name || condoKey}\nGrupo: ${chat.name || ''}\n` +
@@ -153,6 +175,7 @@ export async function processarVisita(chat, condoKey, msg) {
     `Visita aberta hoje: ${aberta ? `sim, entrada às ${aberta.entrada ? hora(aberta.entrada) : '?'}` : 'não'}\n` +
     `Mensagem: ${msg.text.slice(0, 1500)}`);
   const evento = r?.evento || 'nenhum';
+  if (evento !== 'nenhum' && !msg.equipe) await aprenderVistoriador(msg, vistoriador);
   const nome = chat.condo_name || condoKey;
   const txt = msg.text.slice(0, 500);
 
@@ -515,4 +538,29 @@ export async function alertaSemanal() {
   await setSetting(chave, new Date().toISOString());
   for (const m of await relatorio(0, { apenasPendentes: true })) await sendToSuggestionGroup(m);
   console.log('[visita] alerta semanal enviado');
+}
+
+// Reprocessa as mensagens guardadas da semana (ex.: vistoriador que ainda não era reconhecido)
+export async function reprocessarSemana(offset = 0) {
+  const { inicio, fim } = semana(offset);
+  const nomes = (await q(`SELECT DISTINCT vistoriador FROM carteira WHERE ativo AND vistoriador IS NOT NULL`)).rows
+    .map((x) => normalize(x.vistoriador).split(' ')[0]);
+  const msgs = (await q(
+    `SELECT m.*, c.kind AS chat_kind, c.condo_key, c.condo_name, c.name AS chat_name FROM messages m JOIN chats c ON c.jid = m.chat_jid
+     WHERE m.ts >= $1 AND m.ts < $2 AND c.condo_key IS NOT NULL AND c.kind IN ('moradores','sindico','conselho')
+     ORDER BY m.ts`, [inicio, fim]
+  )).rows;
+  let lidas = 0;
+  const antes = (await q(`SELECT COUNT(*)::int AS n FROM visitas`)).rows[0].n;
+  for (const m of msgs) {
+    const doVist = nomes.includes(normalize(m.author_name || '').split(' ')[0]);
+    if (!m.from_me && !doVist) continue;
+    lidas++;
+    try {
+      await processarVisita({ name: m.chat_name, condo_name: m.condo_name, kind: m.chat_kind }, m.condo_key,
+        { text: m.text, ts: new Date(m.ts), authorName: m.author_name, authorJid: m.author_jid, authorAlt: '', equipe: m.from_me });
+    } catch (e) { console.error('[visita] reprocessar', e.message); }
+  }
+  const depois = (await q(`SELECT COUNT(*)::int AS n FROM visitas`)).rows[0].n;
+  return { lidas, novas: depois - antes };
 }

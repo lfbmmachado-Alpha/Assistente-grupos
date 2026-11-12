@@ -10,7 +10,7 @@ import { parseMessage } from './parse.js';
 import { analisar, transcrever } from './gemini.js';
 import { handleCommand } from './commands.js';
 import { registrarExemplo, exemplosPara, fatosDo, docsDo } from './knowledge.js';
-import { processarVisita } from './visitas.js';
+import { processarVisita, vistoriadorPeloNome } from './visitas.js';
 import { situacaoEstudo } from './estudo.js';
 import { tratarResposta, perguntarNaoIdentificados, respostaVinculos } from './identificar.js';
 import { conversar } from './consulta.js';
@@ -105,7 +105,9 @@ async function processar(d) {
   }
   const ok = await permitido(chat, condoKey);
   // Controle de vistorias: mensagens da equipe em QUALQUER grupo de condomínio (independe do modo teste)
-  const ehVisita = msg.isGroup && msg.equipe && !msg.fromMe && !!condoKey && chat.kind !== 'outro';
+  // equipe reconhecida, ou nome do WhatsApp igual ao de um vistoriador do quadro (a IA confirma pelo conteúdo)
+  const ehVisita = msg.isGroup && !msg.fromMe && !!condoKey && chat.kind !== 'outro' &&
+    (msg.equipe || !!(await vistoriadorPeloNome(msg.authorName)));
   console.log(`[recebida] ${chat.kind} "${chat.name || msg.chatJid}" condo=${condoKey || '-'} equipe=${msg.equipe} ${ok ? 'MONITORADO' : ehVisita ? 'só vistoria' : 'ignorado'}: ${msg.text.slice(0, 60).replace(/\n/g, ' ')}`);
   if (!ok && !ehVisita) return; // fora do teste / ignorado: nem grava
 
