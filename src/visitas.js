@@ -564,3 +564,43 @@ export async function reprocessarSemana(offset = 0) {
   const depois = (await q(`SELECT COUNT(*)::int AS n FROM visitas`)).rows[0].n;
   return { lidas, novas: depois - antes };
 }
+
+// Diagnóstico: por que um condomínio do quadro está (ou não) com vistoria
+export async function diagnostico(nome) {
+  const u = await universo();
+  const alvo = normalize(nome);
+  const it = u.itens.find((i) => normalize(i.nome) === alvo) || u.itens.find((i) => normalize(i.nome).includes(alvo));
+  const linhas = [];
+  let condoKey = it?.condo_key;
+  if (it) {
+    linhas.push(`📋 Quadro: *${it.nome}* · vistoriador *${it.vistoriador}*`);
+    linhas.push(it.temGrupo ? `🔗 Ligado ao grupo: *${it.nomeGrupo}*` : `⚠️ Não achei grupo da IA com esse nome. Se existir com outro nome: !apelido ${it.nome.toLowerCase()} = nome do grupo`);
+  } else {
+    linhas.push(`📋 "${nome}" não está no quadro de vistorias.`);
+    const c = (await listCondos()).find((x) => normalize(x.condo_name).includes(alvo));
+    condoKey = c?.condo_key;
+    if (c) linhas.push(`🔗 Mas há grupo da IA: *${c.condo_name}*`);
+  }
+  if (!condoKey) return linhas.join('\n');
+
+  const grupos = (await q(`SELECT name, kind, COALESCE(ativo, TRUE) AS ativo FROM chats WHERE condo_key = $1 AND kind <> 'privado'`, [condoKey])).rows;
+  linhas.push(`\n👥 Grupos: ${grupos.map((g) => `${g.name} (${g.kind}${g.ativo ? '' : ', IA saiu'})`).join(' · ') || 'nenhum'}`);
+  const teste = JSON.parse((await getSetting('test_condos', '[]')) || '[]');
+  linhas.push(`📥 Mensagens sendo guardadas: ${teste.includes(condoKey) ? 'sim' : '*não* (fora do teste: use !estudar ' + (it?.nome || nome).toLowerCase() + ')'}`);
+
+  const { inicio, fim } = semana(0);
+  const msgs = (await q(
+    `SELECT m.ts, m.author_name, m.from_me, m.text FROM messages m JOIN chats c ON c.jid = m.chat_jid
+     WHERE c.condo_key = $1 AND m.ts >= $2 AND m.ts < $3 ORDER BY m.ts DESC LIMIT 15`, [condoKey, inicio, fim]
+  )).rows.reverse();
+  linhas.push(`\n💬 Mensagens desta semana (${msgs.length}${msgs.length === 15 ? '+' : ''}):`);
+  for (const m of msgs) {
+    const vist = !m.from_me && (await vistoriadorPeloNome(m.author_name));
+    const marca = m.from_me ? '🟢 equipe' : vist ? `🟡 ${vist}?` : '⚪';
+    linhas.push(`${marca} ${diaSemana(m.ts)} ${hora(m.ts)} *${m.author_name || '?'}*: ${String(m.text).replace(/\s+/g, ' ').slice(0, 70)}`);
+  }
+  const vis = (await q(`SELECT * FROM visitas WHERE condo_key = $1 AND COALESCE(entrada, saida, ultima_atividade) >= $2 ORDER BY id`, [condoKey, inicio])).rows;
+  linhas.push(`\n🏁 Visitas registradas na semana: ${vis.length ? vis.map((v) => `${quando(v)} ${v.vistoriador} (${v.tipo})`).join(' · ') : 'nenhuma'}`);
+  linhas.push('\n🟢 = reconhecido como equipe · 🟡 = nome igual ao de um vistoriador · ⚪ = tratado como morador');
+  return linhas.join('\n');
+}

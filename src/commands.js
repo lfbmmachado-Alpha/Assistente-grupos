@@ -4,7 +4,7 @@ import { fetchAllGroups, getMediaBase64 } from './evolution.js';
 import { lerDocumento } from './gemini.js';
 import {
   relatorio, historico, linhaVisita, removerVisita, lancarManual, listarCarteira, importarCarteira,
-  enviarPlanilha, semana, dataHoraBR, definirApelido, reprocessarSemana,
+  enviarPlanilha, semana, dataHoraBR, definirApelido, reprocessarSemana, diagnostico,
 } from './visitas.js';
 import { getVistoriadores } from './util.js';
 import { perguntar, limparConversa } from './consulta.js';
@@ -57,6 +57,7 @@ Citando um condomínio, ela foca nele — ex.: _como está o clima no Floresta?_
 !vistorias Nome — visitas de um condomínio
 !vistorias exportar [mm/aaaa] — planilha Excel
 !vistorias reler — relê as mensagens da semana (visita que não apareceu)
+!vistorias diagnostico Nome — mostra por que um condomínio está sem vistoria
 !visita Nome dd/mm hh:mm-hh:mm Vistoriador [extra motivo] — lança à mão
 !visita remover N — apaga a visita N de !vistorias Nome
 !vistoriadores — quem está cadastrado
@@ -392,6 +393,12 @@ export async function handleCommand(msg, suggestionGroup) {
       if (!sub || sub === 'pendentes' || sub === 'passada' || sub === 'semana') {
         const msgs = await relatorio(sub === 'passada' ? -1 : 0, { apenasPendentes: sub === 'pendentes' });
         for (const m of msgs) await reply(m);
+        return true;
+      }
+      if (sub === 'diagnostico' || sub === 'porque' || sub === 'por') {
+        const nome = args.slice(sub === 'por' ? 2 : 1).join(' ');
+        if (!nome) { await reply('Use: !vistorias diagnostico toscana'); return true; }
+        await reply(await diagnostico(nome));
         return true;
       }
       if (sub === 'reprocessar' || sub === 'reler') {
