@@ -4,7 +4,7 @@ import { fetchAllGroups, getMediaBase64 } from './evolution.js';
 import { lerDocumento } from './gemini.js';
 import {
   relatorio, historico, linhaVisita, removerVisita, lancarManual, listarCarteira, importarCarteira,
-  enviarPlanilha, semana, dataHoraBR, definirApelido, reprocessarSemana, diagnostico, verificarSemana,
+  enviarPlanilha, semana, dataHoraBR, definirApelido, reprocessarSemana, diagnostico, verificarSemana, semGrupo,
 } from './visitas.js';
 import { getVistoriadores } from './util.js';
 import { perguntar, limparConversa } from './consulta.js';
@@ -58,6 +58,7 @@ Citando um condomínio, ela foca nele — ex.: _como está o clima no Floresta?_
 !vistorias exportar [mm/aaaa] — planilha Excel
 !vistorias reler — relê as mensagens da semana (visita que não apareceu)
 !vistorias diagnostico Nome — mostra por que um condomínio está sem vistoria
+!vistorias sem grupo — condomínios do quadro sem grupo da IA e grupos fora do quadro
 !vistorias verificar [passada] — verificação geral: a IA lê todas as mensagens da semana e acha idas que passaram
 !visita Nome dd/mm hh:mm-hh:mm Vistoriador [extra motivo] — lança à mão
 !visita remover N — apaga a visita N de !vistorias Nome
@@ -400,6 +401,10 @@ export async function handleCommand(msg, suggestionGroup) {
         const nome = args.slice(sub === 'por' ? 2 : 1).join(' ');
         if (!nome) { await reply('Use: !vistorias diagnostico toscana'); return true; }
         await reply(await diagnostico(nome));
+        return true;
+      }
+      if (sub === 'semgrupo' || sub === 'sem' || sub === 'vinculo' || sub === 'vinculos') {
+        for (const m of await semGrupo()) await reply(m);
         return true;
       }
       if (sub === 'verificar' || sub === 'verificacao' || sub === 'conferir') {

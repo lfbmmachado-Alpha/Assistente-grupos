@@ -669,3 +669,20 @@ export async function verificarSemana(offset = 0, { aoProgresso } = {}) {
   }
   return { conferidos: alvos.length, semMsgs, achados };
 }
+
+// Condomínios do quadro sem grupo da IA + grupos da IA fora do quadro (para usar !apelido)
+export async function semGrupo() {
+  const { itens, fora, vistoriadores } = await universo();
+  const sem = itens.filter((i) => !i.temGrupo);
+  const blocos = [`🔗 *Quadro x grupos da IA*\n✅ ${itens.length - sem.length} de ${itens.length} condomínios do quadro têm grupo com a IA\n⚠️ ${sem.length} sem grupo · ❔ ${fora.length} grupo(s) fora do quadro`];
+  for (const v of vistoriadores) {
+    const l = sem.filter((i) => i.vistoriador === v);
+    if (l.length) blocos.push(`👷 *${v}* (${l.length})\n${l.map((i) => `• ${i.nome}`).join('\n')}`);
+  }
+  if (fora.length) {
+    blocos.push(`❔ *Grupos da IA que não casaram com o quadro (${fora.length})*\n${fora.map((c) => `• ${c.condo_name}`).join('\n')}\n\n` +
+      `Se um deles for um condomínio da lista ⚠️ com outro nome, ligue com:\n_!apelido nome no quadro = nome do grupo_\nEx.: _!apelido helena perez = helena borja_`);
+  }
+  blocos.push(`Para os ⚠️ que não têm grupo: adicione o número da IA no grupo e mande *!sincronizar*.`);
+  return blocos;
+}
