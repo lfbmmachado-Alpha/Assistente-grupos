@@ -11,6 +11,25 @@ const TZ = 'America/Sao_Paulo';
 const OFFSET = 3 * 3600 * 1000; // Brasília, UTC-3 (sem horário de verão)
 
 export async function initVisitas() {
+  await criarTabelas();
+  // Correção (uma vez por inicialização, idempotente): semana sem ordinária, mas com visita que mencionou
+  // "vistoria" → a primeira delas passa a ser a ordinária da semana
+  await q(`
+    WITH cand AS (
+      SELECT v.id, v.condo_key, date_trunc('week', COALESCE(v.entrada, v.saida, v.ultima_atividade) AT TIME ZONE 'America/Sao_Paulo') AS sem,
+             ROW_NUMBER() OVER (PARTITION BY v.condo_key, date_trunc('week', COALESCE(v.entrada, v.saida, v.ultima_atividade) AT TIME ZONE 'America/Sao_Paulo')
+                                ORDER BY COALESCE(v.entrada, v.saida, v.ultima_atividade)) AS ordem
+      FROM visitas v
+      WHERE v.tipo <> 'ordinaria' AND (v.motivo ILIKE '%vistori%' OR v.entrada_txt ILIKE '%vistori%' OR v.saida_txt ILIKE '%vistori%')
+    )
+    UPDATE visitas SET tipo = 'ordinaria'
+    WHERE id IN (
+      SELECT c.id FROM cand c WHERE c.ordem = 1 AND NOT EXISTS (
+        SELECT 1 FROM visitas o WHERE o.condo_key = c.condo_key AND o.tipo = 'ordinaria'
+          AND date_trunc('week', COALESCE(o.entrada, o.saida, o.ultima_atividade) AT TIME ZONE 'America/Sao_Paulo') = c.sem))`);
+}
+
+async function criarTabelas() {
   await q(`
     CREATE TABLE IF NOT EXISTS visitas (
       id               SERIAL PRIMARY KEY,
@@ -97,8 +116,10 @@ async function visitaAberta(condoKey, vistoriador, ts) {
   return v && diaBR(v.entrada || v.ultima_atividade) === diaBR(ts) ? v : null;
 }
 
-async function definirTipo(condoKey, tipoIA, ts) {
-  if (tipoIA === 'extraordinaria') return 'extraordinaria';
+// A primeira visita da semana que mencione "vistoria" conta como a ordinária, mesmo junto com outra tarefa
+// ("vistoria e acompanhar empresa X"). Extraordinária pura (só o chamado) não conta.
+async function definirTipo(condoKey, tipoIA, ts, texto = '') {
+  if (tipoIA === 'extraordinaria' && !/vistori/i.test(texto)) return 'extraordinaria';
   const { inicio, fim } = semana(0, new Date(ts));
   const r = await q(
     `SELECT 1 FROM visitas WHERE condo_key = $1 AND tipo = 'ordinaria'
@@ -127,7 +148,7 @@ export async function processarVisita(chat, condoKey, msg) {
 
   if (evento === 'entrada' || (evento === 'durante' && !aberta)) {
     if (aberta) return;
-    const tipo = await definirTipo(condoKey, r.tipo, ts);
+    const tipo = await definirTipo(condoKey, r.tipo, ts, `${msg.text} ${r.motivo || ''}`);
     await q(
       `INSERT INTO visitas (condo_key, condo_nome, vistoriador, tipo, motivo, entrada, ultima_atividade, entrada_txt)
        VALUES ($1,$2,$3,$4,$5,$6,$6,$7)`,
@@ -144,7 +165,7 @@ export async function processarVisita(chat, condoKey, msg) {
       const rec = await q(`SELECT 1 FROM visitas WHERE condo_key = $1 AND vistoriador = $2 AND saida > $3::timestamptz - interval '60 minutes'`,
         [condoKey, vistoriador, ts]);
       if (rec.rows.length) return;
-      const tipo = await definirTipo(condoKey, r.tipo, ts);
+      const tipo = await definirTipo(condoKey, r.tipo, ts, `${msg.text} ${r.motivo || ''}`);
       await q(
         `INSERT INTO visitas (condo_key, condo_nome, vistoriador, tipo, motivo, saida, ultima_atividade, saida_txt)
          VALUES ($1,$2,$3,$4,$5,$6,$6,$7)`,
