@@ -456,7 +456,7 @@ export async function historico(condoKey) {
 }
 export function linhaVisita(v, i) {
   return `${i + 1}. ${faixa(v)} · ${v.vistoriador || '-'} · ${v.tipo === 'ordinaria' ? 'ordinária' : 'extraordinária'}` +
-    `${v.motivo ? ` (${v.motivo})` : ''}${v.origem === 'manual' ? ' ✍️' : ''}`;
+    `${v.motivo ? ` (${v.motivo})` : ''}${v.origem === 'manual' ? ' ✍️' : v.origem === 'verificacao' ? ' 🔎' : ''}`;
 }
 export async function removerVisita(id) {
   return (await q('DELETE FROM visitas WHERE id = $1', [id])).rowCount;
@@ -610,4 +610,62 @@ export async function diagnostico(nome) {
   linhas.push(`\n🏁 Visitas registradas na semana: ${vis.length ? vis.map((v) => `${quando(v)} ${v.vistoriador} (${v.tipo})`).join(' · ') : 'nenhuma'}`);
   linhas.push('\n🟢 = reconhecido como equipe · 🟡 = nome igual ao de um vistoriador · ⚪ = tratado como morador');
   return linhas.join('\n');
+}
+
+// ---------- verificação geral: a IA lê todas as mensagens da semana dos condomínios ainda sem vistoria ----------
+const INSTR_VERIFICAR = `Você confere o CONTROLE DE VISITAS da Alpha Condomínios (administradora). Recebe todas as mensagens da semana
+dos grupos de WhatsApp de UM condomínio e diz se algum FUNCIONÁRIO DA ALPHA esteve fisicamente no condomínio.
+Conta como presença: aviso de chegada/vistoria, fotos ou relatos feitos no local ("verifiquei a bomba", "estou aqui com o técnico"),
+acompanhar serviço no local, saída ("finalizado", "saindo").
+NÃO conta: visita futura ou agendada ("passo amanhã"), resposta à distância, morador, síndico morador, prestador terceirizado.
+Funcionários da Alpha costumam assinar "Alpha Administradora" ou estar marcados como EQUIPE ALPHA, mas podem não estar.
+Para cada ida diferente, informe data, hora de entrada (aproximada pela primeira mensagem no local) e de saída (se houver), quem foi e o tipo:
+"ordinaria" se for vistoria de rotina ou mencionar vistoria; "extraordinaria" se for só para um chamado/serviço.
+Responda SOMENTE JSON: {"visitas":[{"data":"dd/mm","entrada":"hh:mm","saida":"hh:mm ou vazio","quem":"nome","tipo":"ordinaria|extraordinaria","motivo":"poucas palavras","evidencia":"trecho curto da mensagem"}]}`;
+
+export async function verificarSemana(offset = 0, { aoProgresso } = {}) {
+  const { inicio, fim } = semana(offset);
+  const { itens } = await universo();
+  const vis = await visitasNoPeriodo(inicio, fim);
+  const comOrd = new Set(vis.filter((v) => v.tipo === 'ordinaria').map((v) => v.condo_key));
+  const alvos = itens.filter((i) => i.temGrupo && !comOrd.has(i.condo_key));
+  const achados = [];
+  let semMsgs = 0;
+  for (const [n, it] of alvos.entries()) {
+    const msgs = (await q(
+      `SELECT m.ts, m.author_name, m.from_me, m.text, c.kind FROM messages m JOIN chats c ON c.jid = m.chat_jid
+       WHERE c.condo_key = $1 AND m.ts >= $2 AND m.ts < $3 ORDER BY m.ts LIMIT 600`, [it.condo_key, inicio, fim]
+    )).rows;
+    if (!msgs.length) { semMsgs++; continue; }
+    if (aoProgresso && n && n % 15 === 0) await aoProgresso(`🔎 ${n} de ${alvos.length} condomínios conferidos…`);
+    try {
+      const r = await gerarJSON(INSTR_VERIFICAR,
+        `CONDOMÍNIO: ${it.nome}\nMENSAGENS DA SEMANA:\n` +
+        msgs.map((m) => {
+          const eq = m.from_me || /alpha\s+(administradora|condom[ií]nios)/i.test(m.text || '');
+          return `[${fmt(m.ts, { day: '2-digit', month: '2-digit' })} ${hora(m.ts)}] (${m.kind}) ${eq ? `EQUIPE ALPHA (${m.author_name || ''})` : m.author_name || 'Participante'}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 300)}`;
+        }).join('\n'));
+      for (const v of r?.visitas || []) {
+        if (!v?.data || !v?.entrada) continue;
+        const entrada = dataHoraBR(v.data, v.entrada);
+        if (isNaN(entrada) || entrada < inicio || entrada >= fim) continue;
+        const saida = v.saida && /\d/.test(v.saida) ? dataHoraBR(v.data, v.saida) : null;
+        // não duplica ida já registrada no mesmo condomínio (até 2h de diferença)
+        const dup = await q(
+          `SELECT 1 FROM visitas WHERE condo_key = $1 AND ABS(EXTRACT(EPOCH FROM (COALESCE(entrada, saida) - $2::timestamptz))) < 7200 LIMIT 1`,
+          [it.condo_key, entrada]);
+        if (dup.rows.length) continue;
+        const tipo = v.tipo === 'ordinaria' && !comOrd.has(it.condo_key) ? 'ordinaria' : 'extraordinaria';
+        if (tipo === 'ordinaria') comOrd.add(it.condo_key);
+        await q(
+          `INSERT INTO visitas (condo_key, condo_nome, vistoriador, tipo, motivo, entrada, saida, ultima_atividade, entrada_txt, origem)
+           VALUES ($1,$2,$3,$4,$5,$6::timestamptz,$7::timestamptz,COALESCE($7::timestamptz,$6::timestamptz),$8,'verificacao')`,
+          [it.condo_key, it.nome, (v.quem || 'Equipe').split(' ')[0], tipo, v.motivo || null, entrada, saida, v.evidencia || null]);
+        achados.push({ it, v, tipo });
+      }
+    } catch (e) {
+      console.error('[verificar]', it.nome, e.message);
+    }
+  }
+  return { conferidos: alvos.length, semMsgs, achados };
 }

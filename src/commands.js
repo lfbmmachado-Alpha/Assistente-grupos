@@ -4,7 +4,7 @@ import { fetchAllGroups, getMediaBase64 } from './evolution.js';
 import { lerDocumento } from './gemini.js';
 import {
   relatorio, historico, linhaVisita, removerVisita, lancarManual, listarCarteira, importarCarteira,
-  enviarPlanilha, semana, dataHoraBR, definirApelido, reprocessarSemana, diagnostico,
+  enviarPlanilha, semana, dataHoraBR, definirApelido, reprocessarSemana, diagnostico, verificarSemana,
 } from './visitas.js';
 import { getVistoriadores } from './util.js';
 import { perguntar, limparConversa } from './consulta.js';
@@ -58,6 +58,7 @@ Citando um condomínio, ela foca nele — ex.: _como está o clima no Floresta?_
 !vistorias exportar [mm/aaaa] — planilha Excel
 !vistorias reler — relê as mensagens da semana (visita que não apareceu)
 !vistorias diagnostico Nome — mostra por que um condomínio está sem vistoria
+!vistorias verificar [passada] — verificação geral: a IA lê todas as mensagens da semana e acha idas que passaram
 !visita Nome dd/mm hh:mm-hh:mm Vistoriador [extra motivo] — lança à mão
 !visita remover N — apaga a visita N de !vistorias Nome
 !vistoriadores — quem está cadastrado
@@ -401,6 +402,23 @@ export async function handleCommand(msg, suggestionGroup) {
         await reply(await diagnostico(nome));
         return true;
       }
+      if (sub === 'verificar' || sub === 'verificacao' || sub === 'conferir') {
+        const passada = normalize(args[1] || '') === 'passada';
+        await reply(`🔎 Verificação geral ${passada ? 'da semana passada' : 'desta semana'}: vou ler todas as mensagens dos condomínios ainda sem vistoria. Leva alguns minutos…`);
+        const rel = await reprocessarSemana(passada ? -1 : 0);
+        const r = await verificarSemana(passada ? -1 : 0, { aoProgresso: reply });
+        const linhas = r.achados.map(({ it, v, tipo }) =>
+          `• *${it.nome}* (${it.vistoriador})\n   ${v.data} ${v.entrada}${v.saida ? `–${v.saida}` : ''} · ${v.quem || 'equipe'} · ${tipo === 'ordinaria' ? 'vistoria' : 'extra'}${v.motivo ? ` · ${v.motivo}` : ''}\n   _"${String(v.evidencia || '').slice(0, 80)}"_`);
+        await reply(
+          `✅ *Verificação concluída*\n\n` +
+          `🔁 Regras de detecção: ${rel.novas} visita(s) nova(s)\n` +
+          `🔎 Leitura completa: ${r.conferidos} condomínio(s) sem vistoria conferidos · ${r.achados.length} ida(s) encontrada(s)` +
+          (r.semMsgs ? `\n💤 ${r.semMsgs} sem nenhuma mensagem na semana (nada a conferir)` : '') +
+          (linhas.length ? `\n\n*Encontradas pela leitura:*\n\n${linhas.join('\n\n')}\n\nSe alguma estiver errada: !vistorias Nome → !visita remover N` : '') +
+          `\n\nVeja o resultado com *!vistorias*`
+        );
+        return true;
+      }
       if (sub === 'reprocessar' || sub === 'reler') {
         await reply('🔄 Relendo as mensagens da semana…');
         const r = await reprocessarSemana(normalize(args[1] || '') === 'passada' ? -1 : 0);
@@ -457,7 +475,7 @@ export async function handleCommand(msg, suggestionGroup) {
       if (r.erro) { await reply(r.erro); return true; }
       ultimaListaVisitas = await historico(r.condo.condo_key);
       await reply(ultimaListaVisitas.length
-        ? `🏢 *${r.condo.condo_name}*: últimas visitas\n\n${ultimaListaVisitas.map(linhaVisita).join('\n')}\n\n* = saída estimada · ✍️ = lançada à mão\nPara apagar: !visita remover N`
+        ? `🏢 *${r.condo.condo_name}*: últimas visitas\n\n${ultimaListaVisitas.map(linhaVisita).join('\n')}\n\n* = saída estimada · ✍️ = lançada à mão · 🔎 = achada na verificação geral\nPara apagar: !visita remover N`
         : `🏢 *${r.condo.condo_name}*: nenhuma visita registrada ainda.`);
       return true;
     }
