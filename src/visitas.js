@@ -360,7 +360,7 @@ export async function relatorio(offset = 0, { apenasPendentes = false } = {}) {
   const linhasVist = vistoriadores.map((v) => {
     const g = grupos.get(v);
     const t = g.ok.length + g.pend.length + g.sem.length;
-    return `${barra(g.ok.length, t)} *${v}* ${g.ok.length}/${t}${g.pend.length ? ` · ❌ ${g.pend.length}` : ' ✔️'}`;
+    return `*${v}*\n${barra(g.ok.length, t)} ${g.ok.length}/${t}${g.pend.length ? ` · ❌ ${g.pend.length} pendente${g.pend.length > 1 ? 's' : ''}` : ' ✔️'}`;
   });
 
   const msgs = [];
@@ -368,28 +368,31 @@ export async function relatorio(offset = 0, { apenasPendentes = false } = {}) {
     `📋 *${apenasPendentes ? 'Vistorias pendentes' : 'Vistorias da semana'}*\n${diaSemana(inicio)} ${dataCurta(inicio)} a ${diaSemana(ultimoDia)} ${dataCurta(ultimoDia)}${hoje}\n\n` +
     `✅ *${ok}* de ${total} vistoriados (${pct(ok, total)}%)\n❌ *${pend}* pendentes\n` +
     (sem ? `⚠️ *${sem}* sem grupo da IA (não dá para conferir)\n` : '') +
-    `\n👷 *Por vistoriador*\n${linhasVist.join('\n')}` +
+    `\n👷 *Por vistoriador*\n\n${linhasVist.join('\n\n')}` +
     (!temCarteira ? `\n\n_Sem planilha de vistoriadores: usando os condomínios dos grupos._` : '')
   );
 
+  const SEP = '━━━━━━━━━━━━━━━━';
   for (const v of vistoriadores) {
     const g = grupos.get(v);
     const t = g.ok.length + g.pend.length + g.sem.length;
     if (apenasPendentes && !g.pend.length && !g.sem.length) continue;
-    let m = `👷 *${v}* · ${g.ok.length} de ${t} (${pct(g.ok.length, t)}%)\n`;
-    if (g.pend.length) m += `\n❌ *Pendentes (${g.pend.length})*\n${g.pend.map((it) => `• ${it.nome}`).join('\n')}\n`;
-    if (g.sem.length) m += `\n⚠️ *Sem grupo da IA (${g.sem.length})*\n${g.sem.map((it) => it.nome).join(', ')}\n`;
+    let m = `${SEP}\n👷 *${v.toUpperCase()}*\n${SEP}\n${g.ok.length} de ${t} vistoriados (${pct(g.ok.length, t)}%)\n`;
+
+    // 1º o que foi feito, na ordem em que aconteceu
     if (!apenasPendentes && g.ok.length) {
-      const feitos = g.ok.sort((a, b) => refVis(a.v) - refVis(b.v))
-        .map(({ it, v: x }) => `• ${quando(x)} · ${it.nome}${x.vistoriador && normalize(x.vistoriador) !== normalize(v) ? ` _(por ${x.vistoriador})_` : ''}`);
-      m += `\n✅ *Vistoriados (${g.ok.length})*\n${feitos.join('\n')}\n`;
+      const feitos = g.ok.sort((a, b) => refVis(a.v) - refVis(b.v)).map(({ it, v: x }) =>
+        `• *${it.nome}*\n   ${quando(x)}${x.vistoriador && normalize(x.vistoriador) !== normalize(v) ? ` · _por ${x.vistoriador}_` : ''}`);
+      m += `\n✅ *Vistoriados (${g.ok.length})*\n\n${feitos.join('\n\n')}\n`;
     }
+    if (g.pend.length) m += `\n\n❌ *Pendentes (${g.pend.length})*\n\n${g.pend.map((it) => `• ${it.nome}`).join('\n')}\n`;
+    if (g.sem.length) m += `\n\n⚠️ *Sem grupo da IA (${g.sem.length})*\n\n${g.sem.map((it) => `• ${it.nome}`).join('\n')}\n`;
     if (!apenasPendentes && g.extras.length) {
-      const ex = g.extras.sort((a, b) => refVis(a.v) - refVis(b.v))
-        .map(({ it, v: x }) => `• ${diaSemana(refVis(x))} ${dataCurta(refVis(x))} · ${it.nome}${x.motivo ? ` — ${x.motivo}` : ''}`);
-      m += `\n➕ *Idas extras (${g.extras.length})*\n${ex.join('\n')}\n`;
+      const ex = g.extras.sort((a, b) => refVis(a.v) - refVis(b.v)).map(({ it, v: x }) =>
+        `• *${it.nome}*\n   ${quando(x)}${x.motivo ? `\n   _${x.motivo}_` : ''}`);
+      m += `\n\n➕ *Idas extras (${g.extras.length})*\n\n${ex.join('\n\n')}\n`;
     }
-    if (!g.pend.length && !g.sem.length) m += `\n🎉 Todos vistoriados nesta semana.`;
+    if (!g.pend.length && !g.sem.length) m += `\n\n🎉 Todos vistoriados nesta semana.`;
     msgs.push(m.trim());
   }
 
