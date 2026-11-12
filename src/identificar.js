@@ -167,5 +167,60 @@ async function responderUma(perguntaId, texto) {
   delete perg[msg.quotedId];
   await setSetting('identificar', JSON.stringify(perg));
   const faltam = Object.keys(perg).length;
+  if (p.corrigir) {
+    await sendToSuggestionGroup(`✅ ${p.n}. *${p.nome}* → ${ICONE[kind]} ${NOME_TIPO[kind]} do *${condo_name}*`);
+    return;
+  }
   await sendToSuggestionGroup(`✅ ${p.n}. *${p.nome}* → ${ICONE[kind]} ${NOME_TIPO[kind]} do *${condo_name}*` + (faltam ? `  (faltam ${faltam})` : '\n\n🎉 Todos os grupos identificados.'));
+}
+
+// ---------- lista de vinculações e correção direta ----------
+let ultimaLista = [];
+
+export async function listarVinculos() {
+  ultimaLista = (await q(
+    `SELECT jid, name, kind, condo_key, condo_name FROM chats
+     WHERE kind <> 'privado' AND COALESCE(ativo, TRUE)
+     ORDER BY CASE WHEN kind IN ('moradores','sindico','conselho') THEN 0 WHEN kind = 'outro' THEN 1 ELSE 2 END,
+              condo_name NULLS LAST, kind, name`
+  )).rows;
+  const linhas = ultimaLista.map((g, i) => {
+    const n = i + 1;
+    if (ICONE[g.kind]) return `*${n}.* ${g.name || g.jid}\n     → ${ICONE[g.kind]} ${NOME_TIPO[g.kind]} do *${g.condo_name}*`;
+    if (g.kind === 'ignorado') return `*${n}.* ${g.name || g.jid}\n     → 🚫 ignorado (não é condomínio)`;
+    return `*${n}.* ${g.name || g.jid}\n     → ❔ não identificado`;
+  });
+  const vinculados = ultimaLista.filter((g) => ICONE[g.kind]).length;
+  const cab = `🔗 *Vinculações (${ultimaLista.length} grupos)*\n✅ ${vinculados} vinculados · ❔ ${ultimaLista.filter((g) => g.kind === 'outro').length} sem vínculo · 🚫 ${ultimaLista.filter((g) => g.kind === 'ignorado').length} ignorados\n\n`;
+  const rod = `\n\n*Para corrigir*, mande o número e o certo, uma linha por grupo:\n_!vinculo 5 torino síndico_\n_!vinculo 8 valmir moradores_\n_!vinculo 12 não_ (não é condomínio)`;
+  const blocos = [];
+  let atual = cab;
+  for (const l of linhas) {
+    if ((atual + l).length > 3300) { blocos.push(atual); atual = ''; }
+    atual += (atual && atual !== cab ? '\n' : '') + l;
+  }
+  blocos.push(atual + rod);
+  return blocos;
+}
+
+// "!vinculo 5 torino síndico" (aceita várias linhas)
+export async function corrigirVinculos(texto) {
+  if (!ultimaLista.length) await listarVinculos(); // garante a numeração
+  const linhas = texto.split(/\n+/).map((l) => l.replace(/^!v[ií]nculos?\s*/i, '').trim()).filter(Boolean);
+  let feitos = 0;
+  for (const l of linhas) {
+    const m = l.match(/^(\d+)[\s.)\-:]+(.+)$/);
+    if (!m) { await sendToSuggestionGroup(`Não entendi "${l}". Use: _!vinculo 5 torino síndico_`); continue; }
+    const g = ultimaLista[Number(m[1]) - 1];
+    if (!g) { await sendToSuggestionGroup(`Não existe o número ${m[1]}. Mande !vinculos para ver a lista.`); continue; }
+    const perg = await getPerguntas();
+    const id = `v${m[1]}`;
+    perg[id] = { jid: g.jid, nome: g.name, palpite: null, n: Number(m[1]), corrigir: true };
+    await setSetting('identificar', JSON.stringify(perg));
+    await responderUma(id, m[2]);
+    const depois = await getPerguntas();
+    if (depois[id]) { delete depois[id]; await setSetting('identificar', JSON.stringify(depois)); }
+    feitos++;
+  }
+  return feitos;
 }

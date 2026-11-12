@@ -8,7 +8,7 @@ import {
 } from './visitas.js';
 import { getVistoriadores } from './util.js';
 import { perguntar, limparConversa } from './consulta.js';
-import { perguntarNaoIdentificados } from './identificar.js';
+import { perguntarNaoIdentificados, listarVinculos, corrigirVinculos } from './identificar.js';
 import { revisarTudo, contarAssuntos } from './pendencias.js';
 import { iniciarEstudo, importarHistorico, aprenderTudo, listarEstudos, liberar, alterarDias, resumoCondo } from './estudo.js';
 import {
@@ -71,6 +71,8 @@ Planilha com legenda *!vistorias importar* — condomínios e vistoriadores
 !exemplos — respostas da equipe já aprendidas
 
 *Ajustes*
+!vinculos — lista todos os grupos e a qual condomínio cada um está ligado
+!vinculo N nome tipo — corrige um grupo (ex.: !vinculo 5 torino síndico · !vinculo 7 não)
 !identificar — pergunta de novo sobre os grupos não identificados
    (responda a pergunta com *sim*, o nome certo ex. _torino síndico_, ou *não*)
 !ignorar Nome / !ativar Nome — para ou volta a monitorar um condomínio`;
@@ -529,6 +531,18 @@ export async function handleCommand(msg, suggestionGroup) {
         console.error('[perguntar]', e.message);
         await reply(`❌ Não consegui consultar agora: ${e.message}`);
       }
+      return true;
+    }
+
+    case 'vinculos':
+    case 'vinculacoes':
+    case 'vinculo': {
+      if (cmd === 'vinculo' || /^\d/.test(resto)) {
+        // a numeração continua a da última lista enviada, até um novo !vinculos
+        await corrigirVinculos(texto);
+        return true;
+      }
+      for (const m of await listarVinculos()) await reply(m);
       return true;
     }
 
