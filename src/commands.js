@@ -4,7 +4,7 @@ import { fetchAllGroups, getMediaBase64 } from './evolution.js';
 import { lerDocumento } from './gemini.js';
 import {
   relatorio, historico, linhaVisita, removerVisita, lancarManual, listarCarteira, importarCarteira,
-  enviarPlanilha, semana, dataHoraBR,
+  enviarPlanilha, semana, dataHoraBR, definirApelido,
 } from './visitas.js';
 import { getVistoriadores } from './util.js';
 import { perguntar, limparConversa } from './consulta.js';
@@ -59,6 +59,7 @@ Citando um condomínio, ela foca nele — ex.: _como está o clima no Floresta?_
 !visita Nome dd/mm hh:mm-hh:mm Vistoriador [extra motivo] — lança à mão
 !visita remover N — apaga a visita N de !vistorias Nome
 !vistoriadores — quem está cadastrado
+!apelido nome no quadro = nome do grupo — liga um condomínio do quadro ao grupo (ex.: !apelido helena perez = helena borja)
 Planilha com legenda *!vistorias importar* — condomínios e vistoriadores
 
 *Conhecimento*
@@ -473,6 +474,16 @@ export async function handleCommand(msg, suggestionGroup) {
       const saida = mh[2] ? dataHoraBR(args[iData], mh[2]) : null;
       await lancarManual({ condo_key: r.condo.condo_key, condo_nome: r.condo.condo_name, vistoriador, tipo: extra ? 'extraordinaria' : 'ordinaria', motivo, entrada, saida });
       await reply(`✍️ Visita lançada: *${r.condo.condo_name}* ${args[iData]} ${mh[1]}${mh[2] ? `–${mh[2]}` : ''} · ${vistoriador} · ${extra ? 'extraordinária' : 'ordinária'}${motivo ? ` (${motivo})` : ''}`);
+      return true;
+    }
+
+    case 'apelido': {
+      const [a, b] = resto.split('=').map((x) => (x || '').trim());
+      if (!a || !b) { await reply('Use: !apelido nome no quadro = nome do grupo\nEx.: !apelido helena perez = helena borja'); return true; }
+      const r = await acharCondo(b);
+      if (r.erro) { await reply(r.erro); return true; }
+      await definirApelido(a, r.condo.condo_key);
+      await reply(`🔗 "${a}" (quadro de vistorias) = *${r.condo.condo_name}* (grupo)`);
       return true;
     }
 

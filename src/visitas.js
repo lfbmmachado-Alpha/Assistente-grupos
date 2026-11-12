@@ -5,6 +5,8 @@ import { gerarJSON } from './gemini.js';
 import { sendToSuggestionGroup, digitos, getVistoriadores } from './util.js';
 import { classifyGroup, unificar, normalize } from './groups.js';
 import { sendDocument } from './evolution.js';
+import { melhorCasamento } from './casar.js';
+import { CARTEIRA_PADRAO, ORDEM_VISTORIADORES } from './carteira-padrao.js';
 
 const q = (sql, params) => pool.query(sql, params);
 const TZ = 'America/Sao_Paulo';
@@ -12,6 +14,14 @@ const OFFSET = 3 * 3600 * 1000; // Brasília, UTC-3 (sem horário de verão)
 
 export async function initVisitas() {
   await criarTabelas();
+  // Carteira padrão (quadro de 12/11) se nenhuma planilha foi importada ainda
+  const tem = (await q('SELECT COUNT(*)::int AS n FROM carteira')).rows[0].n;
+  if (!tem) {
+    for (const [v, lista] of Object.entries(CARTEIRA_PADRAO)) {
+      for (const c of lista) await q('INSERT INTO carteira (condo_nome, vistoriador) VALUES ($1, $2)', [c, v]);
+    }
+    console.log('[visita] carteira padrão carregada');
+  }
   // Correção (uma vez por inicialização, idempotente): semana sem ordinária, mas com visita que mencionou
   // "vistoria" → a primeira delas passa a ser a ordinária da semana
   await q(`
@@ -234,29 +244,45 @@ export async function importarCarteira(buffer) {
   for (const [id, nome] of Object.entries(antigos)) if (!vist[id] && nomes.has(nome)) vist[id] = nome;
   await setSetting('vistoriadores', JSON.stringify(vist));
 
-  const keysGrupo = new Set(condos.map((c) => c.condo_key));
-  const semGrupo = rows.filter((r) => !r.key || !keysGrupo.has(r.key)).map((r) => r.nome);
+  const u = await universo();
+  const semGrupo = u.itens.filter((i) => !i.temGrupo).map((i) => i.nome);
   const vistoriadores = [...new Set(rows.map((r) => r.vistoriador).filter(Boolean))];
   const semTelefone = [...new Set(rows.filter((r) => r.vistoriador && !r.telefone).map((r) => r.vistoriador))];
   return { total: rows.length, vistoriadores, semGrupo, semTelefone };
 }
 
+async function getApelidos() {
+  try { return JSON.parse(await getSetting('apelidos', '{}')); } catch { return {}; }
+}
+
+// Casa cada condomínio da carteira com o grupo da IA na hora do relatório (grupos novos entram sozinhos)
 async function universo() {
   const condos = await listCondos();
-  const cart = (await q('SELECT * FROM carteira WHERE ativo ORDER BY vistoriador NULLS LAST, condo_nome')).rows;
+  const cart = (await q('SELECT * FROM carteira WHERE ativo ORDER BY id')).rows;
   if (!cart.length) {
     return {
-      temCarteira: false, fora: [],
+      temCarteira: false, fora: [], vistoriadores: ['Sem planilha'],
       itens: condos.map((c) => ({ condo_key: c.condo_key, nome: c.condo_name, vistoriador: 'Sem planilha', temGrupo: true })),
     };
   }
-  const keysGrupo = new Set(condos.map((c) => c.condo_key));
-  const naCarteira = new Set(cart.map((r) => r.condo_key).filter(Boolean));
-  return {
-    temCarteira: true,
-    itens: cart.map((r) => ({ condo_key: r.condo_key, nome: r.condo_nome, vistoriador: r.vistoriador || 'Sem vistoriador', temGrupo: !!r.condo_key && keysGrupo.has(r.condo_key) })),
-    fora: condos.filter((c) => !naCarteira.has(c.condo_key)),
-  };
+  const apelidos = await getApelidos();
+  const nomes = cart.map((r) => r.condo_nome);
+  const usados = new Set();
+  const itens = cart.map((r) => {
+    const ap = apelidos[normalize(r.condo_nome)];
+    let c = ap ? condos.find((x) => x.condo_key === ap) : null;
+    if (!c) c = melhorCasamento(r.condo_nome, condos.filter((x) => !usados.has(x.condo_key)), nomes);
+    if (c) usados.add(c.condo_key);
+    return { condo_key: c?.condo_key || null, nome: r.condo_nome, nomeGrupo: c?.condo_name, vistoriador: r.vistoriador || 'Sem vistoriador', temGrupo: !!c };
+  });
+  const ordem = [...new Set([...ORDEM_VISTORIADORES.filter((v) => itens.some((i) => i.vistoriador === v)), ...itens.map((i) => i.vistoriador)])];
+  return { temCarteira: true, itens, vistoriadores: ordem, fora: condos.filter((c) => !usados.has(c.condo_key)) };
+}
+
+export async function definirApelido(nomePlanilha, condoKey) {
+  const a = await getApelidos();
+  a[normalize(nomePlanilha)] = condoKey;
+  await setSetting('apelidos', JSON.stringify(a));
 }
 
 async function visitasNoPeriodo(inicio, fim) {
@@ -287,61 +313,106 @@ function emMensagens(blocos, limite = 3500) {
   return out;
 }
 
-// Relatório da semana: lista de mensagens prontas para enviar
+const DIAS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+const diaSemana = (d) => DIAS[new Date(new Date(d).getTime() - OFFSET).getUTCDay()];
+const barra = (ok, total) => {
+  const n = total ? Math.round((ok / total) * 10) : 0;
+  return '▓'.repeat(n) + '░'.repeat(10 - n);
+};
+const pct = (ok, total) => (total ? Math.round((ok / total) * 100) : 0);
+
+function quando(v) {
+  const ref = v.entrada || v.saida || v.ultima_atividade;
+  const e = v.entrada ? hora(v.entrada) : '?';
+  let s = '…';
+  if (v.saida) s = hora(v.saida);
+  else if (v.ultima_atividade && v.entrada && new Date(v.ultima_atividade) > new Date(v.entrada)) s = `${hora(v.ultima_atividade)}*`;
+  return `${diaSemana(ref)} ${dataCurta(ref)} · ${e}–${s}`;
+}
+
+// Relatório da semana: lista de mensagens prontas para enviar (resumo + uma mensagem por vistoriador)
 export async function relatorio(offset = 0, { apenasPendentes = false } = {}) {
   const { inicio, fim } = semana(offset);
-  const { itens, fora, temCarteira } = await universo();
+  const { itens, fora, temCarteira, vistoriadores } = await universo();
   const vis = await visitasNoPeriodo(inicio, fim);
   const porCondo = new Map();
   for (const v of vis) porCondo.set(v.condo_key, [...(porCondo.get(v.condo_key) || []), v]);
+  const refVis = (v) => new Date(v.entrada || v.saida || v.ultima_atividade);
 
-  let ok = 0, pend = 0, semGrupo = 0;
-  const porVist = new Map();
+  const grupos = new Map(vistoriadores.map((v) => [v, { ok: [], pend: [], sem: [], extras: [] }]));
   for (const it of itens) {
+    const g = grupos.get(it.vistoriador);
     const vs = it.condo_key ? porCondo.get(it.condo_key) || [] : [];
-    const ords = vs.filter((v) => v.tipo === 'ordinaria');
-    const extras = vs.filter((v) => v.tipo !== 'ordinaria');
-    let linha;
-    if (ords.length) {
-      ok++;
-      linha = `✅ ${it.nome}: ${ords.map((v) => `${faixa(v)}${v.vistoriador && v.vistoriador !== it.vistoriador ? ` (${v.vistoriador})` : ''}`).join(' · ')}`;
-    } else if (!it.temGrupo) {
-      semGrupo++;
-      linha = `⚠️ ${it.nome} (IA não está no grupo)`;
-    } else {
-      pend++;
-      linha = `❌ ${it.nome}`;
-    }
-    if (extras.length) linha += `\n   ➕ extra: ${extras.map((v) => `${faixa(v)}${v.motivo ? ` (${v.motivo})` : ''}`).join(' · ')}`;
-    if (apenasPendentes && ords.length) continue;
-    const g = porVist.get(it.vistoriador) || { linhas: [], total: 0, ok: 0 };
-    g.linhas.push(linha);
-    porVist.set(it.vistoriador, g);
-  }
-  // total e visitados por vistoriador (conta mesmo os que não aparecem em "só pendentes")
-  for (const it of itens) {
-    const g = porVist.get(it.vistoriador);
-    if (!g) continue;
-    g.total++;
-    if ((porCondo.get(it.condo_key) || []).some((v) => v.tipo === 'ordinaria')) g.ok++;
+    const ord = vs.filter((v) => v.tipo === 'ordinaria').sort((a, b) => refVis(a) - refVis(b))[0];
+    for (const x of vs.filter((v) => v !== ord)) g.extras.push({ it, v: x });
+    if (ord) g.ok.push({ it, v: ord });
+    else if (!it.temGrupo) g.sem.push(it);
+    else g.pend.push(it);
   }
 
+  const total = itens.length;
+  const ok = [...grupos.values()].reduce((s, g) => s + g.ok.length, 0);
+  const pend = [...grupos.values()].reduce((s, g) => s + g.pend.length, 0);
+  const sem = [...grupos.values()].reduce((s, g) => s + g.sem.length, 0);
   const ultimoDia = new Date(fim.getTime() - 86400000);
-  const cab =
-    `📋 *${apenasPendentes ? 'Vistorias pendentes' : 'Vistorias da semana'}* (${dataCurta(inicio)} a ${dataCurta(ultimoDia)})\n` +
-    `✅ Visitados: ${ok} de ${itens.length}\n❌ Pendentes: ${pend}\n⚠️ Sem grupo da IA: ${semGrupo}` +
-    (fora.length ? `\n❔ Grupos fora da planilha: ${fora.length}` : '') +
-    (!temCarteira ? `\n\n_Planilha de vistoriadores ainda não enviada: usando os condomínios dos grupos._` : '') +
-    (!apenasPendentes && vis.length ? `\n\n* = saída estimada pela última mensagem` : '');
+  const hoje = offset === 0 ? `\nHoje: ${diaSemana(new Date())} ${dataCurta(new Date())}` : '';
 
-  const blocos = [cab];
-  for (const [v, g] of porVist) {
-    if (!g.linhas.length) continue;
-    blocos.push(`👷 *${v}* (${g.ok}/${g.total})\n${g.linhas.join('\n')}`);
+  const linhasVist = vistoriadores.map((v) => {
+    const g = grupos.get(v);
+    const t = g.ok.length + g.pend.length + g.sem.length;
+    return `${barra(g.ok.length, t)} *${v}* ${g.ok.length}/${t}${g.pend.length ? ` · ❌ ${g.pend.length}` : ' ✔️'}`;
+  });
+
+  const msgs = [];
+  msgs.push(
+    `📋 *${apenasPendentes ? 'Vistorias pendentes' : 'Vistorias da semana'}*\n${diaSemana(inicio)} ${dataCurta(inicio)} a ${diaSemana(ultimoDia)} ${dataCurta(ultimoDia)}${hoje}\n\n` +
+    `✅ *${ok}* de ${total} vistoriados (${pct(ok, total)}%)\n❌ *${pend}* pendentes\n` +
+    (sem ? `⚠️ *${sem}* sem grupo da IA (não dá para conferir)\n` : '') +
+    `\n👷 *Por vistoriador*\n${linhasVist.join('\n')}` +
+    (!temCarteira ? `\n\n_Sem planilha de vistoriadores: usando os condomínios dos grupos._` : '')
+  );
+
+  for (const v of vistoriadores) {
+    const g = grupos.get(v);
+    const t = g.ok.length + g.pend.length + g.sem.length;
+    if (apenasPendentes && !g.pend.length && !g.sem.length) continue;
+    let m = `👷 *${v}* · ${g.ok.length} de ${t} (${pct(g.ok.length, t)}%)\n`;
+    if (g.pend.length) m += `\n❌ *Pendentes (${g.pend.length})*\n${g.pend.map((it) => `• ${it.nome}`).join('\n')}\n`;
+    if (g.sem.length) m += `\n⚠️ *Sem grupo da IA (${g.sem.length})*\n${g.sem.map((it) => it.nome).join(', ')}\n`;
+    if (!apenasPendentes && g.ok.length) {
+      const feitos = g.ok.sort((a, b) => refVis(a.v) - refVis(b.v))
+        .map(({ it, v: x }) => `• ${quando(x)} · ${it.nome}${x.vistoriador && normalize(x.vistoriador) !== normalize(v) ? ` _(por ${x.vistoriador})_` : ''}`);
+      m += `\n✅ *Vistoriados (${g.ok.length})*\n${feitos.join('\n')}\n`;
+    }
+    if (!apenasPendentes && g.extras.length) {
+      const ex = g.extras.sort((a, b) => refVis(a.v) - refVis(b.v))
+        .map(({ it, v: x }) => `• ${diaSemana(refVis(x))} ${dataCurta(refVis(x))} · ${it.nome}${x.motivo ? ` — ${x.motivo}` : ''}`);
+      m += `\n➕ *Idas extras (${g.extras.length})*\n${ex.join('\n')}\n`;
+    }
+    if (!g.pend.length && !g.sem.length) m += `\n🎉 Todos vistoriados nesta semana.`;
+    msgs.push(m.trim());
   }
-  if (apenasPendentes && pend + semGrupo === 0) blocos.push('🎉 Nenhum condomínio pendente nesta semana!');
-  if (fora.length && !apenasPendentes) blocos.push(`❔ *Grupos fora da planilha*\n${fora.map((c) => `• ${c.condo_name}`).join('\n')}`);
-  return emMensagens(blocos);
+
+  if (!apenasPendentes && fora.length) {
+    const linhas = fora.map((c) => {
+      const vs = porCondo.get(c.condo_key) || [];
+      return `• ${c.condo_name}${vs.length ? ` (${vs.length} ida${vs.length > 1 ? 's' : ''})` : ''}`;
+    });
+    msgs.push(`❔ *Grupos fora da carteira (${fora.length})*\nTêm grupo com a IA, mas não estão no quadro de vistorias. Se for o mesmo condomínio com outro nome:\n_!apelido nome no quadro = nome do grupo_\n\n${linhas.join('\n')}`);
+  }
+  if (!apenasPendentes && vis.some((v) => !v.saida)) msgs.push('_* saída estimada pela última mensagem do vistoriador no dia_');
+  // uma mensagem por bloco; quebra só se passar do limite do WhatsApp
+  return msgs.flatMap((m) => {
+    if (m.length <= 3800) return [m];
+    const partes = [];
+    let atual = '';
+    for (const l of m.split('\n')) {
+      if ((atual + '\n' + l).length > 3800) { partes.push(atual); atual = ''; }
+      atual = atual ? `${atual}\n${l}` : l;
+    }
+    if (atual) partes.push(atual);
+    return partes;
+  });
 }
 
 // Histórico de um condomínio (últimas 20 visitas)
