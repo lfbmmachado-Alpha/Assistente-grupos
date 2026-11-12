@@ -125,6 +125,9 @@ async function aprenderVistoriador(msg, nome) {
 // ---------- detecção nas mensagens ----------
 const PREFILTRO = /(cheg|estou n|estamos n|t[oô] n[oa]|presente|no local|aqui n[oa]|in[ií]ci|vistori|visita|ronda|inspe[cç]|sa[ií]ndo|saida|sa[ií]da|finaliz|encerr|conclu|termin|deixando|j[aá] sa[ií]|at[eé] a pr[oó]xima|retornando|indo embora)/i;
 
+// Aviso de visita/vistoria escrito por QUALQUER pessoa (a IA decide se é funcionário da Alpha)
+export const AVISO_VISITA = /(vistori|estou no condom|estamos no condom|cheguei (no|ao) (condom|pr[eé]dio|edif)|presente no (local|condom)|no local para|visita (t[eé]cnica|de rotina|semanal))/i;
+
 const INSTR_VISITA = `Você analisa mensagens de funcionários da Alpha Condomínios em grupos de WhatsApp dos condomínios, para o CONTROLE DE VISITAS.
 Classifique a mensagem do funcionário:
 - "entrada": avisa que chegou, está no condomínio ou está iniciando a visita/vistoria AGORA ("Bom dia, estou no condomínio para a vistoria", "Cheguei", "Presente no local").
@@ -132,7 +135,10 @@ Classifique a mensagem do funcionário:
 - "durante": relato feito no local durante a visita ("verifiquei a bomba", "segue foto do hall"), sem aviso de chegada ou saída.
 - "nenhum": qualquer outra coisa: visita FUTURA ("passo aí amanhã às 10h"), resposta a morador, cobrança, comunicado, ou quem claramente não está no local.
 tipo: "extraordinaria" se indicar visita fora da rotina (emergência, vazamento, acompanhar obra ou serviço, assembleia, reunião, atender chamado); "ordinaria" se for vistoria de rotina; "indefinido" se não der para saber.
-Se o autor claramente NÃO for funcionário da administradora (um morador falando de si), use "nenhum".
+Qualquer funcionário da Alpha conta (vistoriador, gestor, assistente, zelador volante da Alpha).
+Quando o autor estiver marcado como "não identificado", decida pelo conteúdo se é funcionário da Alpha fazendo visita:
+mensagens como "Bom dia, estou no condomínio para a vistoria" são da Alpha; morador, síndico morador ou prestador
+terceirizado (eletricista, empresa de portão, dedetizadora) NÃO contam → "nenhum".
 Responda SOMENTE JSON: {"evento":"entrada|saida|durante|nenhum","tipo":"ordinaria|extraordinaria|indefinido","motivo":"poucas palavras ou vazio"}`;
 
 async function visitaAberta(condoKey, vistoriador, ts) {
@@ -169,13 +175,14 @@ export async function processarVisita(chat, condoKey, msg) {
   if (aberta) await q(`UPDATE visitas SET ultima_atividade = $2 WHERE id = $1`, [aberta.id, ts]);
   if (!PREFILTRO.test(msg.text)) return 'nenhum';
 
+  const conhecido = msg.equipe || !!(await vistoriadorPeloNome(msg.authorName));
   const r = await gerarJSON(INSTR_VISITA,
-    `Funcionário: ${vistoriador}\nCondomínio: ${chat.condo_name || condoKey}\nGrupo: ${chat.name || ''}\n` +
+    `Autor: ${msg.authorName || vistoriador}${conhecido ? ` (funcionário da Alpha: ${vistoriador})` : ' (não identificado)'}\nCondomínio: ${chat.condo_name || condoKey}\nGrupo: ${chat.name || ''}\n` +
     `Horário: ${fmt(ts, { weekday: 'long', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}\n` +
     `Visita aberta hoje: ${aberta ? `sim, entrada às ${aberta.entrada ? hora(aberta.entrada) : '?'}` : 'não'}\n` +
     `Mensagem: ${msg.text.slice(0, 1500)}`);
   const evento = r?.evento || 'nenhum';
-  if (evento !== 'nenhum' && !msg.equipe) await aprenderVistoriador(msg, vistoriador);
+  if (evento !== 'nenhum' && !msg.equipe && conhecido) await aprenderVistoriador(msg, vistoriador);
   const nome = chat.condo_name || condoKey;
   const txt = msg.text.slice(0, 500);
 
@@ -405,7 +412,7 @@ export async function relatorio(offset = 0, { apenasPendentes = false } = {}) {
     // 1º o que foi feito, na ordem em que aconteceu
     if (!apenasPendentes && g.ok.length) {
       const feitos = g.ok.sort((a, b) => refVis(a.v) - refVis(b.v)).map(({ it, v: x }) =>
-        `• *${it.nome}*\n   ${quando(x)}${x.vistoriador && normalize(x.vistoriador) !== normalize(v) ? ` · _por ${x.vistoriador}_` : ''}`);
+        `• *${it.nome}*\n   ${quando(x)}${x.vistoriador && normalize(x.vistoriador) !== normalize(v) ? ` · _feita por ${x.vistoriador}_` : ''}`);
       m += `\n✅ *Vistoriados (${g.ok.length})*\n\n${feitos.join('\n\n')}\n`;
     }
     if (g.pend.length) m += `\n\n❌ *Pendentes (${g.pend.length})*\n\n${g.pend.map((it) => `• ${it.nome}`).join('\n')}\n`;
@@ -554,7 +561,7 @@ export async function reprocessarSemana(offset = 0) {
   const antes = (await q(`SELECT COUNT(*)::int AS n FROM visitas`)).rows[0].n;
   for (const m of msgs) {
     const doVist = nomes.includes(normalize(m.author_name || '').split(' ')[0]);
-    if (!m.from_me && !doVist) continue;
+    if (!m.from_me && !doVist && !AVISO_VISITA.test(m.text || '')) continue;
     lidas++;
     try {
       await processarVisita({ name: m.chat_name, condo_name: m.condo_name, kind: m.chat_kind }, m.condo_key,
