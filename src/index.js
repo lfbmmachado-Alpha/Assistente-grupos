@@ -3,7 +3,7 @@ import { config } from './config.js';
 import { initDb, purgeOld } from './db.js';
 import { handleWebhook } from './handler.js';
 import { initKnowledge, aprender } from './knowledge.js';
-import { initVisitas, alertaSemanal, rodarEnvios } from './visitas.js';
+import { initVisitas, alertaSemanal, rodarEnvios, conferenciaAutomatica } from './visitas.js';
 import { initEstudo, verificarEstudos } from './estudo.js';
 import { revisarTudo } from './pendencias.js';
 
@@ -39,6 +39,8 @@ setInterval(rodarAprendizado, 3 * 3600 * 1000);
 setInterval(() => alertaSemanal().catch((e) => console.error('[visita]', e.message)), 60 * 1000);
 // Envios programados (ex.: relatório do Kesse no grupo dele às 19h)
 setInterval(() => rodarEnvios().catch((e) => console.error('[envio]', e.message)), 60 * 1000);
+// Conferência automática das vistorias (18h40 todo dia; segunda 06h a semana anterior)
+setInterval(() => conferenciaAutomatica().catch((e) => console.error('[conferência]', e.message)), 5 * 60 * 1000);
 
 // Estudo: libera as sugestões dos condomínios que terminaram o período de estudo
 setInterval(() => verificarEstudos().catch((e) => console.error('[estudo]', e.message)), 10 * 60 * 1000);

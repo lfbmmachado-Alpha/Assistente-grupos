@@ -9,6 +9,7 @@ import {
 } from './visitas.js';
 import { getVistoriadores } from './util.js';
 import { perguntar, limparConversa } from './consulta.js';
+import { saudeIA } from './gemini.js';
 import { perguntarNaoIdentificados, listarVinculos, corrigirVinculos, modelos } from './identificar.js';
 import { revisarTudo, contarAssuntos } from './pendencias.js';
 import { iniciarEstudo, importarHistorico, aprenderTudo, listarEstudos, liberar, alterarDias, resumoCondo } from './estudo.js';
@@ -714,7 +715,11 @@ export async function handleCommand(msg, suggestionGroup) {
       const teste = await getList('test_condos');
       await reply(
         `📊 *Status* (versão ${process.env.RAILWAY_GIT_COMMIT_SHA ? process.env.RAILWAY_GIT_COMMIT_SHA.slice(0, 7) : 'local'})\nModo: ${await getMode()}${(await getMode()) === 'teste' ? ` (${teste.length} condomínios)` : ''}\n` +
-        `Grupos conhecidos: ${s.grupos}\nMensagens nas últimas 24h: ${s.msgs_24h}\nPendências abertas: ${await contarAssuntos()} assunto(s)`
+        `Grupos conhecidos: ${s.grupos}\nMensagens nas últimas 24h: ${s.msgs_24h}\nPendências abertas: ${await contarAssuntos()} assunto(s)\n\n` +
+        `🧠 *IA (Gemini)* desde ${saudeIA.desde.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}\n` +
+        `✅ ${saudeIA.ok} chamadas ok · ❌ ${saudeIA.erros} erros` + (saudeIA.limite ? ` (${saudeIA.limite} por limite de uso)` : '') +
+        (saudeIA.ultimoErro ? `\nÚltimo erro: ${saudeIA.ultimoErro} em ${saudeIA.ultimoErroEm.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : '') +
+        (saudeIA.limite ? `\n⚠️ A chave do Gemini está batendo no limite de uso: parte das análises e vistorias pode estar se perdendo.` : '')
       );
       return true;
     }

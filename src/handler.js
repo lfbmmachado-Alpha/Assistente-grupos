@@ -109,7 +109,10 @@ async function processar(d) {
   const ehVisita = msg.isGroup && !msg.fromMe && !!condoKey && chat.kind !== 'outro' &&
     (msg.equipe || AVISO_VISITA.test(msg.text) || !!(await vistoriadorPeloNome(msg.authorName)));
   console.log(`[recebida] ${chat.kind} "${chat.name || msg.chatJid}" condo=${condoKey || '-'} equipe=${msg.equipe} ${ok ? 'MONITORADO' : ehVisita ? 'só vistoria' : 'ignorado'}: ${msg.text.slice(0, 60).replace(/\n/g, ' ')}`);
-  if (!ok && !ehVisita) return; // fora do teste / ignorado: nem grava
+  // Grupos de condomínio (mesmo fora do teste) sempre têm as mensagens guardadas: a conferência de vistorias precisa delas
+  const grupoCondo = msg.isGroup && !!condoKey && ['moradores', 'sindico', 'conselho'].includes(chat.kind) &&
+    !(await getList('ignored_condos')).includes(condoKey);
+  if (!ok && !ehVisita && !grupoCondo) return; // fora do teste / ignorado
 
   if (msg.audio) {
     try {
@@ -126,7 +129,10 @@ async function processar(d) {
   if (ehVisita) {
     await processarVisita({ ...chat, condo_key: condoKey }, condoKey, msg).catch((e) => console.error('[visita]', e.message));
   }
-  if (!ok) return;
+  if (!ok) {
+    if (grupoCondo) await saveMessage({ ...msg, fromMe: msg.equipe, kind: chat.kind }).catch(() => {});
+    return;
+  }
 
   const nova = await saveMessage({ ...msg, fromMe: msg.equipe, kind: chat.kind });
   if (!nova) return; // duplicada

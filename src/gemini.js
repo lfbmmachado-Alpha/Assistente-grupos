@@ -1,5 +1,27 @@
 import { config } from './config.js';
 
+// Saúde da IA: contagem de chamadas e erros (aparece no !status)
+export const saudeIA = { ok: 0, erros: 0, limite: 0, desde: new Date(), ultimoErro: null, ultimoErroEm: null };
+async function chamarGemini(url, opt) {
+  try {
+    const res = await fetch(url, opt);
+    if (res.ok) saudeIA.ok++;
+    else {
+      saudeIA.erros++;
+      if (res.status === 429) saudeIA.limite++;
+      saudeIA.ultimoErro = `HTTP ${res.status}`;
+      saudeIA.ultimoErroEm = new Date();
+      console.error(`[gemini] HTTP ${res.status}`);
+    }
+    return res;
+  } catch (e) {
+    saudeIA.erros++;
+    saudeIA.ultimoErro = e.message;
+    saudeIA.ultimoErroEm = new Date();
+    throw e;
+  }
+}
+
 const ORIGEM = {
   moradores: 'grupo de moradores',
   sindico: 'grupo interno da administradora com o síndico',
@@ -101,7 +123,7 @@ export async function analisar({ chat, historico, novas, interno, conhecimento =
   };
 
   for (let tentativa = 1; tentativa <= 3; tentativa++) {
-    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const res = await chamarGemini(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (res.status === 429 || res.status >= 500) {
       await new Promise((r) => setTimeout(r, 2000 * tentativa));
       continue;
@@ -126,7 +148,7 @@ export async function transcrever(base64, mimetype) {
     generationConfig: { temperature: 0 },
   };
   for (let tentativa = 1; tentativa <= 3; tentativa++) {
-    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const res = await chamarGemini(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (res.status === 429 || res.status >= 500) { await new Promise((r) => setTimeout(r, 2000 * tentativa)); continue; }
     if (!res.ok) throw new Error(`Gemini transcrição ${res.status}: ${(await res.text()).slice(0, 200)}`);
     const data = await res.json();
@@ -144,7 +166,7 @@ export async function gerarJSON(sistema, texto) {
     generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },
   };
   for (let tentativa = 1; tentativa <= 3; tentativa++) {
-    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const res = await chamarGemini(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (res.status === 429 || res.status >= 500) { await new Promise((r) => setTimeout(r, 3000 * tentativa)); continue; }
     if (!res.ok) throw new Error(`Gemini ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const data = await res.json();
@@ -165,7 +187,7 @@ export async function lerDocumento(base64, mimetype) {
     generationConfig: { temperature: 0, maxOutputTokens: 65000 },
   };
   for (let tentativa = 1; tentativa <= 3; tentativa++) {
-    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const res = await chamarGemini(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (res.status === 429 || res.status >= 500) { await new Promise((r) => setTimeout(r, 3000 * tentativa)); continue; }
     if (!res.ok) throw new Error(`Gemini documento ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const data = await res.json();

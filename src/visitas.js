@@ -186,6 +186,19 @@ export async function processarVisita(chat, condoKey, msg) {
   if (ja.rows.length) return 'repetida';
   const aberta = await visitaAberta(condoKey, vistoriador, ts);
   if (aberta) await q(`UPDATE visitas SET ultima_atividade = $2 WHERE id = $1`, [aberta.id, ts]);
+  // Foto/vídeo sem legenda mandado por funcionário: conta como presença no local
+  const soMidia = /^\[(imagem|vídeo)\]$/.test(String(msg.text).trim());
+  if (soMidia && (msg.equipe || (await vistoriadorPeloNome(msg.authorName)))) {
+    if (aberta) return 'durante';
+    const tipo = await definirTipo(condoKey, 'indefinido', ts, '');
+    await q(
+      `INSERT INTO visitas (condo_key, condo_nome, vistoriador, tipo, motivo, entrada, ultima_atividade, entrada_txt)
+       VALUES ($1,$2,$3,$4,'fotos no grupo',$5,$5,$6)`,
+      [condoKey, chat.condo_name || condoKey, vistoriador, tipo, ts, msg.text]
+    );
+    console.log(`[visita] ENTRADA (fotos) ${vistoriador} em ${chat.condo_name || condoKey} ${hora(ts)} (${tipo})`);
+    return 'entrada';
+  }
   if (!PREFILTRO.test(msg.text)) return 'nenhum';
 
   const conhecido = msg.equipe || !!(await vistoriadorPeloNome(msg.authorName));
@@ -642,6 +655,7 @@ Conta como presença: aviso de chegada/vistoria, fotos ou relatos feitos no loca
 acompanhar serviço no local, saída ("finalizado", "saindo").
 NÃO conta: visita futura ou agendada ("passo amanhã"), resposta à distância, morador, síndico morador, prestador terceirizado.
 Funcionários da Alpha costumam assinar "Alpha Administradora" ou estar marcados como EQUIPE ALPHA, mas podem não estar.
+Fotos ou vídeos ([imagem], [vídeo]) mandados por funcionário da Alpha durante o dia contam como presença no local.
 Para cada ida diferente, informe data, hora de entrada (aproximada pela primeira mensagem no local) e de saída (se houver), quem foi e o tipo:
 "ordinaria" se for vistoria de rotina ou mencionar vistoria; "extraordinaria" se for só para um chamado/serviço.
 Responda SOMENTE JSON: {"visitas":[{"data":"dd/mm","entrada":"hh:mm","saida":"hh:mm ou vazio","quem":"nome","tipo":"ordinaria|extraordinaria","motivo":"poucas palavras","evidencia":"trecho curto da mensagem"}]}`;
@@ -765,6 +779,34 @@ export async function rodarEnvios() {
       console.log(`[envio] relatório de ${e.vistoriador} enviado para ${e.nome}`);
     } catch (err) {
       console.error('[envio]', err.message);
+    }
+  }
+}
+
+// ---------- conferência automática: todo dia às 18h40 (e segunda 06h para a semana anterior) ----------
+export async function conferenciaAutomatica() {
+  const agora = new Date(Date.now() - OFFSET);
+  const min = agora.getUTCHours() * 60 + agora.getUTCMinutes();
+  const hoje = agora.toISOString().slice(0, 10);
+  const tarefas = [];
+  if (min >= 18 * 60 + 40) tarefas.push({ chave: `conf_auto_${hoje}`, offset: 0 }); // antes dos relatórios das 19h
+  if (agora.getUTCDay() === 1 && min >= 6 * 60) tarefas.push({ chave: `conf_auto_passada_${hoje}`, offset: -1 });
+  for (const t of tarefas) {
+    if (await getSetting(t.chave)) continue;
+    await setSetting(t.chave, new Date().toISOString());
+    try {
+      const rel = await reprocessarSemana(t.offset);
+      const r = await verificarSemana(t.offset);
+      const total = rel.novas + r.achados.length;
+      console.log(`[conferência] ${t.offset ? 'semana passada' : 'semana'}: ${total} ida(s) recuperada(s)`);
+      if (total) {
+        await sendToSuggestionGroup(
+          `🔎 *Conferência automática das vistorias${t.offset ? ' (semana passada)' : ''}*\n${total} ida(s) que tinham passado foram registradas.` +
+          (r.achados.length ? `\n\n${r.achados.map(({ it, v }) => `• ${it.nome} — ${v.data} ${v.entrada} · ${v.quem || 'equipe'}`).join('\n')}` : '')
+        );
+      }
+    } catch (e) {
+      console.error('[conferência]', e.message);
     }
   }
 }
