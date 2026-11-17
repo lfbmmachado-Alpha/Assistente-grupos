@@ -35,15 +35,17 @@ export async function initVisitas() {
     await setSetting('ignored_condos', JSON.stringify(ign));
     await setSetting('sairam_aplicado', new Date().toISOString());
   }
-  // Correção (uma vez por inicialização, idempotente): semana sem ordinária, mas com visita que mencionou
-  // "vistoria" → a primeira delas passa a ser a ordinária da semana
+  // Correção (a cada inicialização, idempotente): semana sem ordinária mas com alguma ida → a primeira ida da semana
+  // passa a contar como a visita da semana (regra: qualquer ida conta)
+
+
   await q(`
     WITH cand AS (
       SELECT v.id, v.condo_key, date_trunc('week', COALESCE(v.entrada, v.saida, v.ultima_atividade) AT TIME ZONE 'America/Sao_Paulo') AS sem,
              ROW_NUMBER() OVER (PARTITION BY v.condo_key, date_trunc('week', COALESCE(v.entrada, v.saida, v.ultima_atividade) AT TIME ZONE 'America/Sao_Paulo')
                                 ORDER BY COALESCE(v.entrada, v.saida, v.ultima_atividade)) AS ordem
       FROM visitas v
-      WHERE v.tipo <> 'ordinaria' AND (v.motivo ILIKE '%vistori%' OR v.entrada_txt ILIKE '%vistori%' OR v.saida_txt ILIKE '%vistori%')
+      WHERE v.tipo <> 'ordinaria'
     )
     UPDATE visitas SET tipo = 'ordinaria'
     WHERE id IN (
@@ -172,8 +174,9 @@ async function visitaAberta(condoKey, vistoriador, ts) {
 
 // A primeira visita da semana que mencione "vistoria" conta como a ordinária, mesmo junto com outra tarefa
 // ("vistoria e acompanhar empresa X"). Extraordinária pura (só o chamado) não conta.
+// Regra (Luiz, 17/11): a PRIMEIRA ida da semana, por qualquer motivo, conta como a visita da semana ("ordinaria").
+// As seguintes são idas extras.
 async function definirTipo(condoKey, tipoIA, ts, texto = '') {
-  if (tipoIA === 'extraordinaria' && !/vistori/i.test(texto)) return 'extraordinaria';
   const { inicio, fim } = semana(0, new Date(ts));
   const r = await q(
     `SELECT 1 FROM visitas WHERE condo_key = $1 AND tipo = 'ordinaria'
@@ -458,7 +461,8 @@ export async function relatorio(offset = 0, { apenasPendentes = false, so = null
     // 1º o que foi feito, na ordem em que aconteceu
     if (!apenasPendentes && g.ok.length) {
       const feitos = g.ok.sort((a, b) => refVis(a.v) - refVis(b.v)).map(({ it, v: x }) =>
-        `• *${it.nome}*\n   ${quando(x)}${x.vistoriador && normalize(x.vistoriador) !== normalize(v) ? ` · _feita por ${x.vistoriador}_` : ''}`);
+        `• *${it.nome}*\n   ${quando(x)}${x.vistoriador && normalize(x.vistoriador) !== normalize(v) ? ` · _feita por ${x.vistoriador}_` : ''}` +
+        (x.motivo && !/vistori/i.test(x.motivo) ? `\n   _${x.motivo}_` : ''));
       m += `\n✅ *Vistoriados (${g.ok.length})*\n\n${feitos.join('\n\n')}\n`;
     }
     if (g.pend.length) m += `\n\n❌ *Pendentes (${g.pend.length})*\n\n${g.pend.map((it) => `• ${it.nome}`).join('\n')}\n`;
@@ -705,7 +709,7 @@ export async function verificarSemana(offset = 0, { aoProgresso } = {}) {
           `SELECT 1 FROM visitas WHERE condo_key = $1 AND ABS(EXTRACT(EPOCH FROM (COALESCE(entrada, saida) - $2::timestamptz))) < 7200 LIMIT 1`,
           [it.condo_key, entrada]);
         if (dup.rows.length) continue;
-        const tipo = v.tipo === 'ordinaria' && !comOrd.has(it.condo_key) ? 'ordinaria' : 'extraordinaria';
+        const tipo = !comOrd.has(it.condo_key) ? 'ordinaria' : 'extraordinaria'; // 1ª ida da semana conta
         if (tipo === 'ordinaria') comOrd.add(it.condo_key);
         await q(
           `INSERT INTO visitas (condo_key, condo_nome, vistoriador, tipo, motivo, entrada, saida, ultima_atividade, entrada_txt, origem)
