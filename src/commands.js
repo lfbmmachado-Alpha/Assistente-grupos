@@ -416,6 +416,14 @@ export async function handleCommand(msg, suggestionGroup) {
       if (sub === 'verificar' || sub === 'verificacao' || sub === 'conferir') {
         const passada = normalize(args[1] || '') === 'passada';
         await reply(`🔎 Verificação geral ${passada ? 'da semana passada' : 'desta semana'}: vou ler todas as mensagens de todos os condomínios. Leva alguns minutos…`);
+        // 0) grupos que estavam fora do teste: busca na Evolution as mensagens que não foram guardadas
+        const teste = await getList('test_condos');
+        const foraTeste = (await listCondos()).filter((c) => !teste.includes(c.condo_key));
+        let importadas = 0;
+        for (const c of foraTeste) {
+          try { importadas += (await importarHistorico(c.condo_key)).novas; } catch (e) { console.error('[verificar] histórico', c.condo_name, e.message); }
+        }
+        if (importadas) await reply(`📥 ${importadas} mensagem(ns) recuperada(s) de ${foraTeste.length} grupo(s) que não estavam sendo guardados.`);
         const rel = await reprocessarSemana(passada ? -1 : 0);
         const r = await verificarSemana(passada ? -1 : 0, { aoProgresso: reply });
         const linhas = r.achados.map(({ it, v, tipo }) =>
