@@ -5,7 +5,7 @@ import { lerDocumento } from './gemini.js';
 import {
   relatorio, historico, linhaVisita, removerVisita, lancarManual, listarCarteira, importarCarteira,
   enviarPlanilha, semana, dataHoraBR, definirApelido, reprocessarSemana, diagnostico, verificarSemana, semGrupo,
-  removerDaCarteira, incluirNaCarteira, buscarNaCarteira, listarEnvios, salvarEnvio, removerEnvio, enviarRelatorioVistoriador,
+  removerDaCarteira, incluirNaCarteira, buscarNaCarteira, registrarSaida, listarEnvios, salvarEnvio, removerEnvio, enviarRelatorioVistoriador,
 } from './visitas.js';
 import { getVistoriadores } from './util.js';
 import { perguntar, limparConversa } from './consulta.js';
@@ -64,6 +64,7 @@ Citando um condomínio, ela foca nele — ex.: _como está o clima no Floresta?_
 !vistorias verificar [passada] — verificação geral: a IA lê todas as mensagens da semana e acha idas que passaram
 !visita Nome dd/mm hh:mm-hh:mm Vistoriador [extra motivo] — lança à mão
 !visita remover N — apaga a visita N de !vistorias Nome
+!saida Nome hh:mm — registra a saída (ex.: !saida ipe amarelo 11:30; sem hora = agora)
 !vistoriadores — quem está cadastrado
 !envio Kesse = Condominios Kesse 19h — relatório diário do vistoriador num grupo
 !envios — envios programados (!envio testar N · !envio remover N)
@@ -564,6 +565,23 @@ export async function handleCommand(msg, suggestionGroup) {
       const e = { jid: g.jid, nome: g.name, vistoriador: vist, hora, dias: semFds };
       await salvarEnvio(e);
       await reply(`✅ Programado: relatório de *${vist}* no grupo *${g.name}* todo dia${semFds ? ' (sem fim de semana)' : ''} às *${hora}*.\nPara ver agora como fica: !envio testar ${(await listarEnvios()).length}`);
+      return true;
+    }
+
+    case 'saida':
+    case 'saiu': {
+      // !saida ipe amarelo 11:30   (sem hora = agora)
+      const mh = resto.match(/(\d{1,2})[:h](\d{2})\s*$/);
+      const nome = (mh ? resto.slice(0, mh.index) : resto).trim();
+      if (!nome) { await reply('Use: !saida Nome do condomínio hh:mm\nEx.: !saida ipe amarelo 11:30 (sem hora = agora)'); return true; }
+      const r = await acharCondo(nome);
+      if (r.erro) { await reply(r.erro); return true; }
+      const agoraBR = new Date(Date.now() - 3 * 3600 * 1000);
+      const dd = `${agoraBR.getUTCDate()}/${agoraBR.getUTCMonth() + 1}`;
+      const quando = mh ? dataHoraBR(dd, `${mh[1]}:${mh[2]}`) : new Date();
+      const v = await registrarSaida(r.condo.condo_key, quando);
+      await reply(v ? `🏁 Saída registrada: *${r.condo.condo_name}* · ${v.vistoriador} · ${quando.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' })}`
+        : `Não achei visita aberta em ${r.condo.condo_name} antes desse horário.`);
       return true;
     }
 

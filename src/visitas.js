@@ -72,6 +72,7 @@ async function criarTabelas() {
       criado_em        TIMESTAMPTZ DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS idx_visitas_condo ON visitas (condo_key, entrada);
+    ALTER TABLE visitas ADD COLUMN IF NOT EXISTS saida_estimada BOOLEAN DEFAULT FALSE;
     CREATE TABLE IF NOT EXISTS carteira (
       id          SERIAL PRIMARY KEY,
       condo_nome  TEXT NOT NULL,
@@ -186,6 +187,44 @@ async function definirTipo(condoKey, tipoIA, ts, texto = '') {
   return r.rows.length ? 'extraordinaria' : 'ordinaria';
 }
 
+// Quando o vistoriador aparece em outro condomínio, a visita aberta no anterior é encerrada:
+// saída = última mensagem dele lá (se houver depois da entrada) ou a chegada no próximo, marcada como estimada.
+async function fecharAnteriores(vistoriador, condoKey, ts) {
+  const abertas = (await q(
+    `SELECT * FROM visitas WHERE vistoriador = $1 AND condo_key <> $2 AND saida IS NULL AND entrada IS NOT NULL
+       AND entrada < $3 AND entrada > $3::timestamptz - interval '14 hours'`, [vistoriador, condoKey, ts]
+  )).rows;
+  for (const v of abertas) {
+    const fim = v.ultima_atividade && new Date(v.ultima_atividade) > new Date(v.entrada) ? v.ultima_atividade : ts;
+    await q(`UPDATE visitas SET saida = $2, saida_estimada = TRUE WHERE id = $1`, [v.id, fim]);
+    console.log(`[visita] SAÍDA estimada ${vistoriador} de ${v.condo_nome} ${hora(fim)} (chegou em outro condomínio)`);
+  }
+}
+
+// Encerra no fim do dia as visitas que ficaram abertas (saída = última mensagem do vistoriador no local)
+export async function fecharDia() {
+  const abertas = (await q(
+    `SELECT * FROM visitas WHERE saida IS NULL AND entrada IS NOT NULL AND entrada < now() - interval '3 hours'
+       AND (entrada AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date
+       OR (saida IS NULL AND entrada IS NOT NULL AND entrada < now() - interval '10 hours')`
+  )).rows;
+  for (const v of abertas) {
+    if (v.ultima_atividade && new Date(v.ultima_atividade) > new Date(v.entrada)) {
+      await q(`UPDATE visitas SET saida = ultima_atividade, saida_estimada = TRUE WHERE id = $1`, [v.id]);
+    }
+  }
+}
+
+// Saída informada à mão: !saida ipe 11:30
+export async function registrarSaida(condoKey, quando) {
+  const v = (await q(
+    `SELECT * FROM visitas WHERE condo_key = $1 AND entrada IS NOT NULL AND entrada <= $2 ORDER BY entrada DESC LIMIT 1`, [condoKey, quando]
+  )).rows[0];
+  if (!v) return null;
+  await q(`UPDATE visitas SET saida = $2, saida_estimada = FALSE, ultima_atividade = GREATEST(ultima_atividade, $2) WHERE id = $1`, [v.id, quando]);
+  return v;
+}
+
 // Chamado para toda mensagem da equipe num grupo de condomínio (independe do modo teste)
 export async function processarVisita(chat, condoKey, msg) {
   const vistoriador = await nomeVistoriador(msg);
@@ -199,6 +238,7 @@ export async function processarVisita(chat, condoKey, msg) {
   const soMidia = /^\[(imagem|vídeo)\]$/.test(String(msg.text).trim());
   if (soMidia && (msg.equipe || (await vistoriadorPeloNome(msg.authorName)))) {
     if (aberta) return 'durante';
+    await fecharAnteriores(vistoriador, condoKey, ts);
     const tipo = await definirTipo(condoKey, 'indefinido', ts, '');
     await q(
       `INSERT INTO visitas (condo_key, condo_nome, vistoriador, tipo, motivo, entrada, ultima_atividade, entrada_txt)
@@ -227,6 +267,7 @@ export async function processarVisita(chat, condoKey, msg) {
 
   if (evento === 'entrada' || (evento === 'durante' && !aberta)) {
     if (aberta) return;
+    await fecharAnteriores(vistoriador, condoKey, ts);
     const tipo = await definirTipo(condoKey, r.tipo, ts, `${msg.text} ${r.motivo || ''}`);
     await q(
       `INSERT INTO visitas (condo_key, condo_nome, vistoriador, tipo, motivo, entrada, ultima_atividade, entrada_txt)
@@ -236,7 +277,7 @@ export async function processarVisita(chat, condoKey, msg) {
     console.log(`[visita] ENTRADA ${vistoriador} em ${nome} ${hora(ts)} (${tipo})`);
   } else if (evento === 'saida') {
     if (aberta) {
-      await q(`UPDATE visitas SET saida = $2, saida_txt = $3, ultima_atividade = $2,
+      await q(`UPDATE visitas SET saida = $2, saida_txt = $3, ultima_atividade = $2, saida_estimada = FALSE,
                motivo = COALESCE(motivo, $4) WHERE id = $1`, [aberta.id, ts, txt, r.motivo || null]);
       console.log(`[visita] SAÍDA ${vistoriador} de ${nome} ${hora(ts)}`);
     } else {
@@ -393,9 +434,14 @@ const pct = (ok, total) => (total ? Math.round((ok / total) * 100) : 0);
 function quando(v) {
   const ref = v.entrada || v.saida || v.ultima_atividade;
   const e = v.entrada ? hora(v.entrada) : '?';
-  let s = '…';
-  if (v.saida) s = hora(v.saida);
-  else if (v.ultima_atividade && v.entrada && new Date(v.ultima_atividade) > new Date(v.entrada)) s = `${hora(v.ultima_atividade)}*`;
+  const hojeBR = dataLonga(new Date());
+  let s;
+  if (v.saida) s = `${hora(v.saida)}${v.saida_estimada ? '*' : ''}`;
+  else if (v.entrada && dataLonga(v.entrada) === hojeBR) {
+    const ult = v.ultima_atividade && new Date(v.ultima_atividade) > new Date(v.entrada) ? ` (última msg ${hora(v.ultima_atividade)})` : '';
+    return `${diaSemana(ref)} ${dataCurta(ref)} · ${e} · 🟢 *em andamento*${ult}`;
+  } else if (v.ultima_atividade && v.entrada && new Date(v.ultima_atividade) > new Date(v.entrada)) s = `${hora(v.ultima_atividade)}*`;
+  else s = 'saída não informada';
   return `${diaSemana(ref)} ${dataCurta(ref)} · ${e}–${s}`;
 }
 
@@ -483,7 +529,7 @@ export async function relatorio(offset = 0, { apenasPendentes = false, so = null
     });
     msgs.push(`❔ *Grupos fora da carteira (${fora.length})*\nTêm grupo com a IA, mas não estão no quadro de vistorias. Se for o mesmo condomínio com outro nome:\n_!apelido nome no quadro = nome do grupo_\n\n${linhas.join('\n')}`);
   }
-  if (!apenasPendentes && !so && vis.some((v) => !v.saida)) msgs.push('_* saída estimada pela última mensagem do vistoriador no dia_');
+  if (!apenasPendentes && !so && vis.some((v) => !v.saida)) msgs.push('_* saída estimada (última mensagem no local ou chegada no condomínio seguinte)_');
   // uma mensagem por bloco; quebra só se passar do limite do WhatsApp
   return msgs.flatMap((m) => {
     if (m.length <= 3800) return [m];
@@ -542,7 +588,7 @@ export async function exportar(inicio, fim, titulo) {
       Vistoriador: v.vistoriador,
       Tipo: v.tipo === 'ordinaria' ? 'Ordinária' : 'Extraordinária',
       Entrada: v.entrada ? hora(v.entrada) : 'não informada',
-      'Saída': v.saida ? hora(v.saida) : fimEst ? `${hora(fimEst)} (estimada)` : 'não informada',
+      'Saída': v.saida ? `${hora(v.saida)}${v.saida_estimada ? ' (estimada)' : ''}` : fimEst ? `${hora(fimEst)} (estimada)` : 'não informada',
       'Duração (min)': v.entrada && fimEst ? Math.round((new Date(fimEst) - new Date(v.entrada)) / 60000) : '',
       Motivo: v.motivo || '',
       Origem: v.origem === 'manual' ? 'Lançada à mão' : 'Grupo do WhatsApp',
@@ -802,6 +848,7 @@ export async function rodarEnvios() {
 
 // ---------- conferência automática: todo dia às 18h40 (e segunda 06h para a semana anterior) ----------
 export async function conferenciaAutomatica() {
+  await fecharDia().catch((e) => console.error('[visita] fechar dia', e.message));
   const agora = new Date(Date.now() - OFFSET);
   const min = agora.getUTCHours() * 60 + agora.getUTCMinutes();
   const hoje = agora.toISOString().slice(0, 10);
