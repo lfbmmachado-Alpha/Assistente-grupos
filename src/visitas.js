@@ -145,9 +145,15 @@ const INSTR_VISITA = `Você analisa mensagens de funcionários da Alpha Condomí
 Classifique a mensagem do funcionário:
 - "entrada": avisa que chegou, está no condomínio ou está iniciando a visita/vistoria AGORA ("Bom dia, estou no condomínio para a vistoria", "Cheguei", "Presente no local").
 - "saida": avisa que terminou ou está saindo ("Vistoria finalizada", "Saindo do condomínio", "Encerrando a visita").
-- "durante": relato feito no local durante a visita ("verifiquei a bomba", "segue foto do hall"), sem aviso de chegada ou saída.
-- "nenhum": qualquer outra coisa: visita FUTURA ("passo aí amanhã às 10h"), resposta a morador, cobrança, comunicado, ou quem claramente não está no local.
-tipo: "extraordinaria" se indicar visita fora da rotina (emergência, vazamento, acompanhar obra ou serviço, assembleia, reunião, atender chamado); "ordinaria" se for vistoria de rotina; "indefinido" se não der para saber.
+- "durante": relato feito no local durante a visita ("verifiquei a bomba", "segue foto do hall", "deixei o material na portaria",
+  "entreguei as lâmpadas ao zelador", "estou aqui com o técnico"), sem aviso de chegada ou saída.
+TODA IDA CONTA, qualquer que seja o motivo: vistoria, entrega ou retirada de material, acompanhar técnico ou obra, atender chamado,
+reunião, assembleia, leitura de gás, buscar chave/documento.
+- "nenhum": visita FUTURA ("passo aí amanhã às 10h", "vou levar o material"), resposta ou comunicado feito à distância,
+  cobrança, aviso geral — ou seja, quando NÃO dá para concluir que a pessoa está ou esteve no condomínio naquele momento.
+tipo: "ordinaria" se for vistoria de rotina ou mencionar vistoria; "extraordinaria" para qualquer outro motivo (entrega de material,
+técnico, obra, chamado, assembleia, reunião…); "indefinido" se não der para saber.
+motivo: poucas palavras dizendo para que foi (ex.: "entrega de material", "acompanhar técnico do portão", "vistoria").
 Qualquer funcionário da Alpha conta (vistoriador, gestor, assistente, zelador volante da Alpha).
 Quando o autor estiver marcado como "não identificado", decida pelo conteúdo se é funcionário da Alpha fazendo visita:
 mensagens como "Bom dia, estou no condomínio para a vistoria" são da Alpha; morador, síndico morador ou prestador
@@ -199,7 +205,11 @@ export async function processarVisita(chat, condoKey, msg) {
     console.log(`[visita] ENTRADA (fotos) ${vistoriador} em ${chat.condo_name || condoKey} ${hora(ts)} (${tipo})`);
     return 'entrada';
   }
-  if (!PREFILTRO.test(msg.text)) return 'nenhum';
+  const funcionario = msg.equipe || !!(await vistoriadorPeloNome(msg.authorName));
+  // Mensagem de funcionário: sempre analisa (qualquer ida conta: entrega de material, técnico, chamado…).
+  // Autor não identificado: só se tiver cara de aviso de visita.
+  if (!funcionario && !PREFILTRO.test(msg.text)) return 'nenhum';
+  if (funcionario && String(msg.text).trim().length < 4) return 'nenhum';
 
   const conhecido = msg.equipe || !!(await vistoriadorPeloNome(msg.authorName));
   const r = await gerarJSON(INSTR_VISITA,
@@ -651,21 +661,24 @@ export async function diagnostico(nome) {
 // ---------- verificação geral: a IA lê todas as mensagens da semana dos condomínios ainda sem vistoria ----------
 const INSTR_VERIFICAR = `Você confere o CONTROLE DE VISITAS da Alpha Condomínios (administradora). Recebe todas as mensagens da semana
 dos grupos de WhatsApp de UM condomínio e diz se algum FUNCIONÁRIO DA ALPHA esteve fisicamente no condomínio.
-Conta como presença: aviso de chegada/vistoria, fotos ou relatos feitos no local ("verifiquei a bomba", "estou aqui com o técnico"),
-acompanhar serviço no local, saída ("finalizado", "saindo").
-NÃO conta: visita futura ou agendada ("passo amanhã"), resposta à distância, morador, síndico morador, prestador terceirizado.
+Conta como presença QUALQUER ida, por qualquer motivo: aviso de chegada/vistoria, fotos ou relatos feitos no local
+("verifiquei a bomba", "estou aqui com o técnico"), entrega ou retirada de material ("deixei o material na portaria",
+"levei as lâmpadas"), acompanhar serviço ou obra, atender chamado, reunião/assembleia, saída ("finalizado", "saindo").
+NÃO conta: visita futura ou agendada ("passo amanhã", "vou levar o material"), resposta à distância, morador, síndico morador, prestador terceirizado.
 Funcionários da Alpha costumam assinar "Alpha Administradora" ou estar marcados como EQUIPE ALPHA, mas podem não estar.
 Fotos ou vídeos ([imagem], [vídeo]) mandados por funcionário da Alpha durante o dia contam como presença no local.
 Para cada ida diferente, informe data, hora de entrada (aproximada pela primeira mensagem no local) e de saída (se houver), quem foi e o tipo:
-"ordinaria" se for vistoria de rotina ou mencionar vistoria; "extraordinaria" se for só para um chamado/serviço.
+"ordinaria" se for vistoria de rotina ou mencionar vistoria; "extraordinaria" para qualquer outro motivo (entrega de material, chamado, serviço…).
 Responda SOMENTE JSON: {"visitas":[{"data":"dd/mm","entrada":"hh:mm","saida":"hh:mm ou vazio","quem":"nome","tipo":"ordinaria|extraordinaria","motivo":"poucas palavras","evidencia":"trecho curto da mensagem"}]}`;
 
 export async function verificarSemana(offset = 0, { aoProgresso } = {}) {
   const { inicio, fim } = semana(offset);
-  const { itens } = await universo();
+  const { itens, fora } = await universo();
   const vis = await visitasNoPeriodo(inicio, fim);
   const comOrd = new Set(vis.filter((v) => v.tipo === 'ordinaria').map((v) => v.condo_key));
-  const alvos = itens.filter((i) => i.temGrupo && !comOrd.has(i.condo_key));
+  // todos os condomínios com grupo (toda ida conta, não só a vistoria que falta)
+  const alvos = [...itens.filter((i) => i.temGrupo),
+    ...fora.map((c) => ({ condo_key: c.condo_key, nome: c.condo_name, vistoriador: 'fora do quadro', temGrupo: true }))];
   const achados = [];
   let semMsgs = 0;
   for (const [n, it] of alvos.entries()) {

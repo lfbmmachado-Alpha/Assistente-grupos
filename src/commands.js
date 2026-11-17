@@ -415,7 +415,7 @@ export async function handleCommand(msg, suggestionGroup) {
       }
       if (sub === 'verificar' || sub === 'verificacao' || sub === 'conferir') {
         const passada = normalize(args[1] || '') === 'passada';
-        await reply(`🔎 Verificação geral ${passada ? 'da semana passada' : 'desta semana'}: vou ler todas as mensagens dos condomínios ainda sem vistoria. Leva alguns minutos…`);
+        await reply(`🔎 Verificação geral ${passada ? 'da semana passada' : 'desta semana'}: vou ler todas as mensagens de todos os condomínios. Leva alguns minutos…`);
         const rel = await reprocessarSemana(passada ? -1 : 0);
         const r = await verificarSemana(passada ? -1 : 0, { aoProgresso: reply });
         const linhas = r.achados.map(({ it, v, tipo }) =>
@@ -423,7 +423,7 @@ export async function handleCommand(msg, suggestionGroup) {
         await reply(
           `✅ *Verificação concluída*\n\n` +
           `🔁 Regras de detecção: ${rel.novas} visita(s) nova(s)\n` +
-          `🔎 Leitura completa: ${r.conferidos} condomínio(s) sem vistoria conferidos · ${r.achados.length} ida(s) encontrada(s)` +
+          `🔎 Leitura completa: ${r.conferidos} condomínio(s) conferidos · ${r.achados.length} ida(s) encontrada(s)` +
           (r.semMsgs ? `\n💤 ${r.semMsgs} sem nenhuma mensagem na semana (nada a conferir)` : '') +
           (linhas.length ? `\n\n*Encontradas pela leitura:*\n\n${linhas.join('\n\n')}\n\nSe alguma estiver errada: !vistorias Nome → !visita remover N` : '') +
           `\n\nVeja o resultado com *!vistorias*`
