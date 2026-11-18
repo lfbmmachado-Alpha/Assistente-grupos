@@ -13,9 +13,34 @@ function avisarSemCredito() {
 
 // Saúde da IA: contagem de chamadas e erros (aparece no !status)
 export const saudeIA = { ok: 0, erros: 0, limite: 0, semCredito: null, desde: new Date(), ultimoErro: null, ultimoErroEm: null };
+// Modelo descontinuado (404 "no longer available"): troca sozinho pelo modelo que o Google indica e tenta de novo
+const trocados = {};
+async function trocarModeloSeDescontinuado(url, res) {
+  if (res.status !== 404) return null;
+  const corpo = await res.clone().text().catch(() => '');
+  if (!/no longer available|not found|is not supported/i.test(corpo)) return null;
+  const antigo = (url.match(/\/models\/([^:]+):/) || [])[1];
+  if (!antigo) return null;
+  if (trocados[antigo]) return url.replace(`/models/${antigo}:`, `/models/${trocados[antigo]}:`);
+  let novo = (corpo.match(/use models\/([\w.\-]+)/i) || [])[1];
+  if (!novo) novo = /lite/.test(antigo) ? 'gemini-3.5-flash-lite' : 'gemini-3.5-flash';
+  novo = novo.replace(/[.\-]+$/, '');
+  if (!novo || novo === antigo) return null;
+  trocados[antigo] = novo;
+  if (config.geminiModel === antigo) config.geminiModel = novo;
+  if (config.geminiModelLeve === antigo) config.geminiModelLeve = novo;
+  console.warn(`[gemini] modelo ${antigo} descontinuado → usando ${novo}`);
+  import('./util.js').then(({ sendToSuggestionGroup }) => sendToSuggestionGroup(
+    `⚙️ O Google descontinuou o modelo *${antigo}*. Passei a usar *${novo}* automaticamente.`
+  )).catch(() => {});
+  return url.replace(`/models/${antigo}:`, `/models/${novo}:`);
+}
+
 async function chamarGemini(url, opt) {
   try {
-    const res = await fetch(url, opt);
+    let res = await fetch(url, opt);
+    const nova = !res.ok && (await trocarModeloSeDescontinuado(url, res));
+    if (nova) res = await fetch(nova, opt);
     if (res.ok) saudeIA.ok++;
     else {
       saudeIA.erros++;

@@ -21,7 +21,7 @@ export const config = {
   geminiKey: req('GEMINI_API_KEY'),
   geminiModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
   // Modelo mais barato para tarefas simples (classificar visitas, revisar pendências, identificar grupos)
-  geminiModelLeve: process.env.GEMINI_MODEL_LEVE || 'gemini-2.5-flash-lite',
+  geminiModelLeve: process.env.GEMINI_MODEL_LEVE || 'gemini-3.5-flash-lite',
 
   // Comportamento
   defaultMode: process.env.DEFAULT_MODE || 'teste',          // teste | producao
