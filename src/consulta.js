@@ -1,6 +1,6 @@
 // Perguntas do Luiz sobre um condomínio: responde com base nas conversas, na base de conhecimento e nos documentos.
 import { pool } from './db.js';
-import { gerarJSON } from './gemini.js';
+import { gerarJSON, gerarTexto } from './gemini.js';
 import { fatosDo, docsDo } from './knowledge.js';
 
 const q = (sql, params) => pool.query(sql, params);
@@ -53,7 +53,7 @@ Responda com base SOMENTE no material fornecido: conversas recentes, base de con
   vazamentos, elevador, obras atrasadas, conflitos, menção a trocar de administradora, vistoria atrasada.
 - Se o material não for suficiente (ex.: grupos com poucas mensagens), diga isso claramente e não invente.
 - Use o HISTÓRICO DA CONVERSA para entender perguntas de continuação ("e o segundo?", "detalha esse").
-Responda SOMENTE com JSON: {"resposta": "..."}`;
+Responda direto com o texto da resposta (sem JSON).`;
 
 async function getConversa() {
   try { return JSON.parse(await getSetting('conversa', '[]')); } catch { return []; }
@@ -67,11 +67,13 @@ function citados(texto, condos) {
     .sort((a, b) => b.condo_key.length - a.condo_key.length);
 }
 
+const SINAIS = /(ningu[eé]m (responde|resolve|retorn)|absurdo|descaso|reclama|urgente|vazament|infiltra|elevador|port[aã]o|insatisf|cobran|demora|aguardando|sem resposta|trocar de administradora|advogad|procon|risco|perigo|quebrad|parad)/i;
+
 async function panorama(condos, dias) {
   const keys = condos.map((c) => c.condo_key);
   const msgs = (await q(
     `SELECT m.text, m.ts, m.author_name, m.from_me, m.status, m.summary, c.condo_key, c.kind FROM messages m JOIN chats c ON c.jid = m.chat_jid
-     WHERE c.condo_key = ANY($1) AND m.ts > now() - ($2 || ' days')::interval ORDER BY m.ts DESC LIMIT 6000`,
+     WHERE c.condo_key = ANY($1) AND m.ts > now() - ($2 || ' days')::interval ORDER BY m.ts DESC LIMIT 20000`,
     [keys, String(dias)]
   )).rows;
   const fatos = (await q(`SELECT condo_key, fato FROM fatos WHERE condo_key = ANY($1) ORDER BY atualizado_em DESC`, [keys])).rows;
@@ -81,18 +83,32 @@ async function panorama(condos, dias) {
   ).catch(() => ({ rows: [] }))).rows;
 
   const fmt = (d) => new Date(d).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-  const blocos = [];
-  for (const c of condos) {
-    const ms = msgs.filter((m) => m.condo_key === c.condo_key).slice(0, condos.length > 1 ? 80 : 600).reverse();
-    const fs = fatos.filter((f) => f.condo_key === c.condo_key).slice(0, condos.length > 1 ? 15 : 80);
+  const um = condos.length === 1;
+  // pontua cada condomínio: pendências e mensagens com sinais de problema pesam mais
+  const info = condos.map((c) => {
+    const ms = msgs.filter((m) => m.condo_key === c.condo_key);
     const pend = new Set(ms.filter((m) => m.status === 'pendente').map((m) => m.summary || m.text)).size;
-    const vis = visitas.find((v) => v.condo_key === c.condo_key);
+    const sinais = ms.filter((m) => !m.from_me && SINAIS.test(m.text || '')).length;
+    return { c, ms, pend, sinais, nota: pend * 3 + sinais * 2 + Math.min(ms.length, 50) / 10 };
+  }).sort((a, b) => b.nota - a.nota);
+  const detalhados = um ? info : info.slice(0, 15);
+  const resumidos = um ? [] : info.slice(15);
+
+  const blocos = [];
+  for (const x of detalhados) {
+    const ms = x.ms.slice(0, um ? 400 : 45).reverse();
+    const fs = fatos.filter((f) => f.condo_key === x.c.condo_key).slice(0, um ? 80 : 12);
+    const vis = visitas.find((v) => v.condo_key === x.c.condo_key);
     blocos.push(
-      `##### ${c.condo_name}\n` +
-      `Mensagens no período: ${ms.length} · Pendências sem resposta: ${pend} · Última vistoria ordinária: ${vis?.ultima ? fmt(vis.ultima) : 'sem registro'}\n` +
+      `##### ${x.c.condo_name}\n` +
+      `Mensagens no período: ${x.ms.length} · Pendências sem resposta: ${x.pend} · Mensagens com sinal de problema: ${x.sinais} · Última vistoria: ${vis?.ultima ? fmt(vis.ultima) : 'sem registro'}\n` +
       (fs.length ? `Base:\n${fs.map((f) => `- ${f.fato}`).join('\n')}\n` : '') +
-      (ms.length ? `Conversas:\n${ms.map((m) => `[${fmt(m.ts)}] (${m.kind}) ${m.from_me || /alpha\s+(administradora|condom[ií]nios)/i.test(m.text || '') ? `EQUIPE ALPHA (${m.author_name || ''})` : m.author_name || 'Participante'}: ${String(m.text).slice(0, 300)}`).join('\n')}` : 'Conversas: (nenhuma no período)')
+      (ms.length ? `Conversas:\n${ms.map((m) => `[${fmt(m.ts)}] (${m.kind}) ${m.from_me || /alpha\s+(administradora|condom[ií]nios)/i.test(m.text || '') ? `EQUIPE ALPHA (${m.author_name || ''})` : m.author_name || 'Participante'}: ${String(m.text).replace(/\s+/g, ' ').slice(0, um ? 350 : 180)}`).join('\n')}` : 'Conversas: (nenhuma no período)')
     );
+  }
+  if (resumidos.length) {
+    blocos.push(`##### Demais condomínios (menos sinais de atenção; só números)\n` +
+      resumidos.map((x) => `- ${x.c.condo_name}: ${x.ms.length} msgs · ${x.pend} pendências · ${x.sinais} sinais`).join('\n'));
   }
   return blocos.join('\n\n');
 }
@@ -111,8 +127,7 @@ export async function conversar(texto) {
     (historico.length ? `HISTÓRICO DA CONVERSA:\n${historico.map((h) => `LUIZ: ${h.p}\nVOCÊ: ${h.r}`).join('\n\n')}\n\n` : '') +
     `PERGUNTA DO LUIZ: ${texto}\n\nMATERIAL:\n${await panorama(escopo, dias)}`;
 
-  const r = await gerarJSON(INSTR_CONVERSA, entrada);
-  const resposta = r?.resposta || 'Não consegui montar a resposta agora.';
+  const resposta = await gerarTexto(INSTR_CONVERSA, entrada);
   await setSetting('conversa', JSON.stringify([...historico, { p: texto.slice(0, 500), r: resposta.slice(0, 1500) }].slice(-6)));
   return { resposta, escopo: escopo.length === 1 ? escopo[0].condo_name : null, total: escopo.length };
 }

@@ -745,7 +745,8 @@ export async function handleCommand(msg, suggestionGroup) {
         `🧠 *IA (Gemini)* desde ${saudeIA.desde.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}\n` +
         `✅ ${saudeIA.ok} chamadas ok · ❌ ${saudeIA.erros} erros` + (saudeIA.limite ? ` (${saudeIA.limite} por limite de uso)` : '') +
         (saudeIA.ultimoErro ? `\nÚltimo erro: ${saudeIA.ultimoErro} em ${saudeIA.ultimoErroEm.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : '') +
-        (saudeIA.limite ? `\n⚠️ A chave do Gemini está batendo no limite de uso: parte das análises e vistorias pode estar se perdendo.` : '')
+        (saudeIA.limite ? `\n⚠️ A chave do Gemini está batendo no limite de uso: parte das análises e vistorias pode estar se perdendo.` : '') +
+        (saudeIA.semCredito ? `\n🚨 *Créditos do Gemini esgotados* (desde ${saudeIA.semCredito.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}). Recarregue no AI Studio → Billing.` : '')
       );
       return true;
     }

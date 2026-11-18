@@ -259,7 +259,7 @@ export async function processarVisita(chat, condoKey, msg) {
     `Autor: ${msg.authorName || vistoriador}${conhecido ? ` (funcionário da Alpha: ${vistoriador})` : ' (não identificado)'}\nCondomínio: ${chat.condo_name || condoKey}\nGrupo: ${chat.name || ''}\n` +
     `Horário: ${fmt(ts, { weekday: 'long', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}\n` +
     `Visita aberta hoje: ${aberta ? `sim, entrada às ${aberta.entrada ? hora(aberta.entrada) : '?'}` : 'não'}\n` +
-    `Mensagem: ${msg.text.slice(0, 1500)}`);
+    `Mensagem: ${msg.text.slice(0, 1500)}`, { leve: true });
   const evento = r?.evento || 'nenhum';
   if (evento !== 'nenhum' && !msg.equipe && conhecido) await aprenderVistoriador(msg, vistoriador);
   const nome = chat.condo_name || condoKey;
@@ -744,7 +744,7 @@ export async function verificarSemana(offset = 0, { aoProgresso } = {}) {
         msgs.map((m) => {
           const eq = m.from_me || /alpha\s+(administradora|condom[ií]nios)/i.test(m.text || '');
           return `[${fmt(m.ts, { day: '2-digit', month: '2-digit' })} ${hora(m.ts)}] (${m.kind}) ${eq ? `EQUIPE ALPHA (${m.author_name || ''})` : m.author_name || 'Participante'}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 300)}`;
-        }).join('\n'));
+        }).join('\n'), { leve: true });
       for (const v of r?.visitas || []) {
         if (!v?.data || !v?.entrada) continue;
         const entrada = dataHoraBR(v.data, v.entrada);

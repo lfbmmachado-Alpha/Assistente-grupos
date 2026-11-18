@@ -46,7 +46,8 @@ async function adivinhar(nomeGrupo, conhecidos) {
 diga a qual condomínio ele pertence e o tipo: "moradores" (grupo geral do condomínio), "sindico" (grupo interno com o síndico/gestão)
 ou "conselho". Se claramente não for de condomínio (família, amigos, fornecedor, equipe interna), use condominio "".
 Responda SOMENTE JSON: {"condominio": "nome exatamente como na lista, ou vazio", "tipo": "moradores|sindico|conselho"}`,
-      `GRUPO: ${nomeGrupo}\n\nCONDOMÍNIOS:\n${conhecidos.map((c) => c.condo_name).join('\n')}`
+      `GRUPO: ${nomeGrupo}\n\nCONDOMÍNIOS:\n${conhecidos.map((c) => c.condo_name).join('\n')}`,
+      { leve: true }
     );
     const c = conhecidos.find((x) => normalize(x.condo_name) === normalize(r?.condominio || ''));
     if (c) return { ...c, kind: ['moradores', 'sindico', 'conselho'].includes(r.tipo) ? r.tipo : tipoPelasPalavras(nomeGrupo), fonte: 'ia' };

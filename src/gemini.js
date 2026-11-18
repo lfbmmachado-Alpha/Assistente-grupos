@@ -1,7 +1,18 @@
 import { config } from './config.js';
 
+// Aviso (no máximo 1 a cada 3h) quando os créditos do Gemini acabam
+let ultimoAviso = 0;
+function avisarSemCredito() {
+  if (Date.now() - ultimoAviso < 3 * 3600 * 1000) return;
+  ultimoAviso = Date.now();
+  import('./util.js').then(({ sendToSuggestionGroup }) => sendToSuggestionGroup(
+    '🚨 *Os créditos do Gemini acabaram.*\nEnquanto não forem recarregados, a IA para de analisar mensagens, registrar vistorias, transcrever áudios e responder perguntas.\n\n' +
+    'Recarregue em: https://aistudio.google.com → projeto da chave → *Billing*.\nAs mensagens continuam sendo guardadas; depois da recarga, rode *!vistorias verificar* para recuperar as idas do período.'
+  )).catch(() => {});
+}
+
 // Saúde da IA: contagem de chamadas e erros (aparece no !status)
-export const saudeIA = { ok: 0, erros: 0, limite: 0, desde: new Date(), ultimoErro: null, ultimoErroEm: null };
+export const saudeIA = { ok: 0, erros: 0, limite: 0, semCredito: null, desde: new Date(), ultimoErro: null, ultimoErroEm: null };
 async function chamarGemini(url, opt) {
   try {
     const res = await fetch(url, opt);
@@ -9,6 +20,7 @@ async function chamarGemini(url, opt) {
     else {
       saudeIA.erros++;
       if (res.status === 429) saudeIA.limite++;
+      if (res.status === 402) { saudeIA.semCredito = new Date(); avisarSemCredito(); }
       saudeIA.ultimoErro = `HTTP ${res.status}`;
       saudeIA.ultimoErroEm = new Date();
       console.error(`[gemini] HTTP ${res.status}`);
@@ -158,12 +170,13 @@ export async function transcrever(base64, mimetype) {
 }
 
 // Chamada genérica que devolve JSON (usada pelo aprendizado)
-export async function gerarJSON(sistema, texto) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.geminiModel}:generateContent?key=${config.geminiKey}`;
+export async function gerarJSON(sistema, texto, { leve = false } = {}) {
+  const modelo = leve ? config.geminiModelLeve : config.geminiModel;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${config.geminiKey}`;
   const body = {
     systemInstruction: { parts: [{ text: sistema }] },
     contents: [{ role: 'user', parts: [{ text: texto }] }],
-    generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },
+    generationConfig: { temperature: 0.2, responseMimeType: 'application/json', maxOutputTokens: 16384 },
   };
   for (let tentativa = 1; tentativa <= 3; tentativa++) {
     const res = await chamarGemini(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -171,9 +184,39 @@ export async function gerarJSON(sistema, texto) {
     if (!res.ok) throw new Error(`Gemini ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const data = await res.json();
     const t = data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join('') || '{}';
-    return JSON.parse(t.replace(/^```json\s*|```$/g, ''));
+    return lerJSON(t);
   }
   throw new Error('Gemini indisponível após 3 tentativas');
+}
+
+// JSON tolerante: tira cercas de código e, se vier texto em volta, pega o primeiro objeto
+function lerJSON(t) {
+  const limpo = String(t).replace(/^```(json)?\s*|```\s*$/g, '').trim();
+  try { return JSON.parse(limpo); } catch {}
+  const i = limpo.indexOf('{'), j = limpo.lastIndexOf('}');
+  if (i >= 0 && j > i) { try { return JSON.parse(limpo.slice(i, j + 1)); } catch {} }
+  throw new Error('a IA devolveu uma resposta incompleta');
+}
+
+// Resposta em texto livre (conversa): não depende de JSON e aproveita a resposta mesmo se cortada no fim
+export async function gerarTexto(sistema, texto, { maxTokens = 8192 } = {}) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.geminiModel}:generateContent?key=${config.geminiKey}`;
+  const body = {
+    systemInstruction: { parts: [{ text: sistema }] },
+    contents: [{ role: 'user', parts: [{ text: texto }] }],
+    generationConfig: { temperature: 0.3, maxOutputTokens: maxTokens },
+  };
+  for (let tentativa = 1; tentativa <= 3; tentativa++) {
+    const res = await chamarGemini(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (res.status === 429 || res.status >= 500) { await new Promise((r) => setTimeout(r, 4000 * tentativa)); continue; }
+    if (!res.ok) throw new Error(`Gemini ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    const data = await res.json();
+    const c = data?.candidates?.[0];
+    const t = (c?.content?.parts?.map((p) => p.text).join('') || '').trim();
+    if (!t) throw new Error(`a IA não respondeu (${c?.finishReason || data?.promptFeedback?.blockReason || 'sem motivo'})`);
+    return c?.finishReason === 'MAX_TOKENS' ? `${t}\n\n_(resposta resumida por tamanho)_` : t;
+  }
+  throw new Error('a IA está no limite de uso agora; tente de novo em alguns minutos');
 }
 
 // Converte um PDF (base64) em texto, preservando artigos e numeração
