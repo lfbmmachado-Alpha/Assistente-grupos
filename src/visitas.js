@@ -3,7 +3,7 @@ import XLSX from 'xlsx';
 import { pool, getSetting, setSetting, listCondos } from './db.js';
 import { gerarJSON } from './gemini.js';
 import { sendToSuggestionGroup, digitos, getVistoriadores } from './util.js';
-import { classifyGroup, unificar, normalize } from './groups.js';
+import { classifyGroup, unificar, normalize, definirDistintos } from './groups.js';
 import { sendDocument, sendText } from './evolution.js';
 import { melhorCasamento } from './casar.js';
 import { CARTEIRA_PADRAO, ORDEM_VISTORIADORES, SAIRAM } from './carteira-padrao.js';
@@ -14,6 +14,7 @@ const OFFSET = 3 * 3600 * 1000; // Brasília, UTC-3 (sem horário de verão)
 
 export async function initVisitas() {
   await criarTabelas();
+  try { definirDistintos((await q('SELECT condo_nome FROM carteira WHERE ativo')).rows.map((r) => r.condo_nome)); } catch {}
   // Carteira padrão (quadro de 12/11) se nenhuma planilha foi importada ainda
   const tem = (await q('SELECT COUNT(*)::int AS n FROM carteira')).rows[0].n;
   if (!tem) {
@@ -152,7 +153,7 @@ Classifique a mensagem do funcionário:
   "entreguei as lâmpadas ao zelador", "estou aqui com o técnico"), sem aviso de chegada ou saída.
 TODA IDA CONTA, qualquer que seja o motivo: vistoria, entrega ou retirada de material, acompanhar técnico ou obra, atender chamado,
 reunião, assembleia, leitura de gás, buscar chave/documento.
-- "nenhum": visita FUTURA ("passo aí amanhã às 10h", "vou levar o material"), resposta ou comunicado feito à distância,
+- "nenhum": visita FUTURA ou A CAMINHO ("passo aí amanhã às 10h", "vou levar o material", "estou a caminho", "indo para o condomínio", "chego em 10 minutos" — quem diz que está indo AINDA NÃO chegou e pode não ir), resposta ou comunicado feito à distância,
   cobrança, aviso geral — ou seja, quando NÃO dá para concluir que a pessoa está ou esteve no condomínio naquele momento.
 tipo: "ordinaria" se for vistoria de rotina ou mencionar vistoria; "extraordinaria" para qualquer outro motivo (entrega de material,
 técnico, obra, chamado, assembleia, reunião…); "indefinido" se não der para saber.
@@ -369,6 +370,7 @@ async function getApelidos() {
 async function universo() {
   const condos = await listCondos();
   const cart = (await q('SELECT * FROM carteira WHERE ativo ORDER BY id')).rows;
+  definirDistintos(cart.map((r) => r.condo_nome));
   if (!cart.length) {
     return {
       temCarteira: false, fora: [], vistoriadores: ['Sem planilha'],
@@ -715,9 +717,10 @@ dos grupos de WhatsApp de UM condomínio e diz se algum FUNCIONÁRIO DA ALPHA es
 Conta como presença QUALQUER ida, por qualquer motivo: aviso de chegada/vistoria, fotos ou relatos feitos no local
 ("verifiquei a bomba", "estou aqui com o técnico"), entrega ou retirada de material ("deixei o material na portaria",
 "levei as lâmpadas"), acompanhar serviço ou obra, atender chamado, reunião/assembleia, saída ("finalizado", "saindo").
-NÃO conta: visita futura ou agendada ("passo amanhã", "vou levar o material"), resposta à distância, morador, síndico morador, prestador terceirizado.
+NÃO conta: visita futura, agendada ou "a caminho" ("passo amanhã", "vou levar o material", "estou a caminho", "indo aí") sem confirmação de que chegou, resposta à distância, morador, síndico morador, prestador terceirizado.
 Funcionários da Alpha costumam assinar "Alpha Administradora" ou estar marcados como EQUIPE ALPHA, mas podem não estar.
 Fotos ou vídeos ([imagem], [vídeo]) mandados por funcionário da Alpha durante o dia contam como presença no local.
+Use SÓ as mensagens do próprio grupo deste condomínio: não conte ida a OUTRO condomínio citado na conversa (nomes parecidos, ex.: "Beatriz" x "Paula Beatriz").
 Para cada ida diferente, informe data, hora de entrada (aproximada pela primeira mensagem no local) e de saída (se houver), quem foi e o tipo:
 "ordinaria" se for vistoria de rotina ou mencionar vistoria; "extraordinaria" para qualquer outro motivo (entrega de material, chamado, serviço…).
 Responda SOMENTE JSON: {"visitas":[{"data":"dd/mm","entrada":"hh:mm","saida":"hh:mm ou vazio","quem":"nome","tipo":"ordinaria|extraordinaria","motivo":"poucas palavras","evidencia":"trecho curto da mensagem"}]}`;
@@ -730,6 +733,7 @@ export async function verificarSemana(offset = 0, { aoProgresso } = {}) {
   // todos os condomínios com grupo (toda ida conta, não só a vistoria que falta)
   const alvos = [...itens.filter((i) => i.temGrupo),
     ...fora.map((c) => ({ condo_key: c.condo_key, nome: c.condo_name, vistoriador: 'fora do quadro', temGrupo: true }))];
+  const descartadas = await getDescartadas();
   const achados = [];
   let semMsgs = 0;
   for (const [n, it] of alvos.entries()) {
@@ -756,6 +760,7 @@ export async function verificarSemana(offset = 0, { aoProgresso } = {}) {
           `SELECT 1 FROM visitas WHERE condo_key = $1 AND ABS(EXTRACT(EPOCH FROM (COALESCE(entrada, saida) - $2::timestamptz))) < 7200 LIMIT 1`,
           [it.condo_key, entrada]);
         if (dup.rows.length) continue;
+        if (descartadas.includes(`${it.condo_key}|${diaBR(entrada)}`)) continue; // apagada à mão: não volta
         const tipo = !comOrd.has(it.condo_key) ? 'ordinaria' : 'extraordinaria'; // 1ª ida da semana conta
         if (tipo === 'ordinaria') comOrd.add(it.condo_key);
         await q(
@@ -965,4 +970,36 @@ export async function compararLista(texto, { lancar = false } = {}) {
     msgs.push(`✅ *Já registradas*\n${ok.map(({ it, v }) => `• ${it.nome} · ${quando(v)}`).join('\n')}`);
   }
   return msgs;
+}
+
+// ---------- apagar ida registrada por engano (ex.: "a caminho" que não foi, condomínio confundido) ----------
+async function getDescartadas() {
+  try { return JSON.parse(await getSetting('visitas_descartadas', '[]')); } catch { return []; }
+}
+export async function apagarVisitas(nome, data) {
+  const u = await universo();
+  const alvo = normalize(nome);
+  const it = u.itens.find((i) => normalize(i.nome) === alvo) || u.itens.find((i) => normalize(i.nomeGrupo || '') === alvo);
+  let condoKey = it?.condo_key, rotulo = it?.nome;
+  if (!condoKey) {
+    const c = (await listCondos()).find((x) => normalize(x.condo_name) === alvo) || u.fora.find((x) => normalize(x.condo_name).includes(alvo));
+    condoKey = c?.condo_key; rotulo = c?.condo_name;
+  }
+  if (!condoKey) return `Não achei "${nome}". Use o nome como está no relatório (ex.: !vistorias apagar antares).`;
+  let ini, fim;
+  if (data) { ini = dataHoraBR(data, '00:00'); fim = new Date(ini.getTime() + 86400000); }
+  else ({ inicio: ini, fim } = semana(0));
+  const vis = (await q(
+    `SELECT * FROM visitas WHERE condo_key = $1 AND COALESCE(entrada, saida, ultima_atividade) >= $2 AND COALESCE(entrada, saida, ultima_atividade) < $3 ORDER BY id`,
+    [condoKey, ini, fim])).rows;
+  if (!vis.length) return `Nenhuma ida registrada para *${rotulo}* ${data ? `em ${data}` : 'nesta semana'}.`;
+  const desc = await getDescartadas();
+  for (const v of vis) {
+    await q('DELETE FROM visitas WHERE id = $1', [v.id]);
+    const k = `${condoKey}|${diaBR(v.entrada || v.saida || v.ultima_atividade)}`;
+    if (!desc.includes(k)) desc.push(k);
+  }
+  await setSetting('visitas_descartadas', JSON.stringify(desc.slice(-500)));
+  return `🗑️ *${rotulo}*: apaguei ${vis.length} ida(s):\n${vis.map((v) => `• ${quando(v)} ${v.vistoriador}${v.motivo ? ` _(${v.motivo})_` : ''}`).join('\n')}\n\n` +
+    `A verificação não registra de novo nesse dia. O condomínio volta para pendente se não houver outra ida na semana.`;
 }

@@ -5,7 +5,7 @@ import { lerDocumento } from './gemini.js';
 import {
   relatorio, historico, linhaVisita, removerVisita, lancarManual, listarCarteira, importarCarteira,
   enviarPlanilha, semana, dataHoraBR, definirApelido, reprocessarSemana, diagnostico, verificarSemana, semGrupo,
-  removerDaCarteira, incluirNaCarteira, buscarNaCarteira, registrarSaida, compararLista, listarEnvios, salvarEnvio, removerEnvio, enviarRelatorioVistoriador,
+  removerDaCarteira, incluirNaCarteira, buscarNaCarteira, registrarSaida, compararLista, apagarVisitas, listarEnvios, salvarEnvio, removerEnvio, enviarRelatorioVistoriador,
 } from './visitas.js';
 import { getVistoriadores } from './util.js';
 import { perguntar, limparConversa } from './consulta.js';
@@ -62,6 +62,7 @@ Citando um condomínio, ela foca nele — ex.: _como está o clima no Floresta?_
 !vistorias diagnostico Nome — mostra por que um condomínio está sem vistoria
 !vistorias sem grupo — condomínios do quadro sem grupo da IA e grupos fora do quadro
 !vistorias comparar + lista colada — compara a lista da equipe com o que está registrado
+!vistorias apagar Nome [dd/mm] — apaga ida registrada por engano (não volta na verificação)
 !vistorias lancar + lista colada — compara e lança o que faltar
 !vistorias verificar [passada] — verificação geral: a IA lê todas as mensagens da semana e acha idas que passaram
 !visita Nome dd/mm hh:mm-hh:mm Vistoriador [extra motivo] — lança à mão
@@ -410,6 +411,14 @@ export async function handleCommand(msg, suggestionGroup) {
         const nome = args.slice(sub === 'por' ? 2 : 1).join(' ');
         if (!nome) { await reply('Use: !vistorias diagnostico toscana'); return true; }
         await reply(await diagnostico(nome));
+        return true;
+      }
+      if (sub === 'apagar' || sub === 'remover' || sub === 'excluir') {
+        let resto = args.slice(1).join(' ');
+        const md = resto.match(/\s+(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)\s*$/);
+        if (md) resto = resto.slice(0, md.index);
+        if (!resto.trim()) { await reply('Use: *!vistorias apagar Antares* (todas da semana) ou *!vistorias apagar Antares 17/11* (só aquele dia)'); return true; }
+        await reply(await apagarVisitas(resto.trim(), md?.[1]));
         return true;
       }
       if (sub === 'comparar' || sub === 'lancar' || sub === 'lista') {

@@ -41,6 +41,16 @@ export function classifyGroup(name) {
 
 // Liga grupos de nomes um pouco diferentes ao mesmo condomínio:
 // "Sind-Cristiana" e "Condominio Cristiana Importante" → mesma chave, se as palavras de um contêm as do outro.
+// Nomes que o quadro de vistorias diz serem condomínios DIFERENTES ("Beatriz" x "Paula Beatriz", "Minas" x "Minas das Esmeraldas"):
+// nunca são unificados, mesmo que as palavras de um estejam no outro.
+let DISTINTOS = new Set();
+export function chaveDoNome(nome) {
+  return normalize(nome).replace(RUIDO, ' ').replace(/\s+/g, ' ').trim();
+}
+export function definirDistintos(nomes) {
+  DISTINTOS = new Set((nomes || []).map(chaveDoNome).filter(Boolean));
+}
+
 export function unificar(cls, existentes) {
   if (!cls.condo_key) return cls;
   if (existentes.some((c) => c.condo_key === cls.condo_key)) return cls;
@@ -48,6 +58,7 @@ export function unificar(cls, existentes) {
   const candidatos = existentes.filter((c) => {
     const outro = c.condo_key.split(' ');
     const [menor, maior] = meu.length <= outro.length ? [meu, outro] : [outro, meu];
+    if (DISTINTOS.has(cls.condo_key) && DISTINTOS.has(c.condo_key)) return false; // os dois estão no quadro como condomínios diferentes
     return menor.join('').length >= 3 && menor.every((p) => maior.includes(p));
   });
   if (candidatos.length !== 1) return cls;
