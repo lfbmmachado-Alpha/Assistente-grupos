@@ -5,7 +5,7 @@ import { lerDocumento } from './gemini.js';
 import {
   relatorio, historico, linhaVisita, removerVisita, lancarManual, listarCarteira, importarCarteira,
   enviarPlanilha, semana, dataHoraBR, definirApelido, reprocessarSemana, diagnostico, verificarSemana, semGrupo,
-  removerDaCarteira, incluirNaCarteira, buscarNaCarteira, registrarSaida, listarEnvios, salvarEnvio, removerEnvio, enviarRelatorioVistoriador,
+  removerDaCarteira, incluirNaCarteira, buscarNaCarteira, registrarSaida, compararLista, listarEnvios, salvarEnvio, removerEnvio, enviarRelatorioVistoriador,
 } from './visitas.js';
 import { getVistoriadores } from './util.js';
 import { perguntar, limparConversa } from './consulta.js';
@@ -61,6 +61,8 @@ Citando um condomínio, ela foca nele — ex.: _como está o clima no Floresta?_
 !vistorias reler — relê as mensagens da semana (visita que não apareceu)
 !vistorias diagnostico Nome — mostra por que um condomínio está sem vistoria
 !vistorias sem grupo — condomínios do quadro sem grupo da IA e grupos fora do quadro
+!vistorias comparar + lista colada — compara a lista da equipe com o que está registrado
+!vistorias lancar + lista colada — compara e lança o que faltar
 !vistorias verificar [passada] — verificação geral: a IA lê todas as mensagens da semana e acha idas que passaram
 !visita Nome dd/mm hh:mm-hh:mm Vistoriador [extra motivo] — lança à mão
 !visita remover N — apaga a visita N de !vistorias Nome
@@ -408,6 +410,12 @@ export async function handleCommand(msg, suggestionGroup) {
         const nome = args.slice(sub === 'por' ? 2 : 1).join(' ');
         if (!nome) { await reply('Use: !vistorias diagnostico toscana'); return true; }
         await reply(await diagnostico(nome));
+        return true;
+      }
+      if (sub === 'comparar' || sub === 'lancar' || sub === 'lista') {
+        const corpo = texto.split('\n').slice(1).join('\n');
+        if (!corpo.trim()) { await reply('Mande na mesma mensagem: na 1ª linha *!vistorias comparar* (ou *!vistorias lancar*) e, abaixo, a lista colada da planilha:\nNOME  dd/mm/aaaa  QUEM'); return true; }
+        for (const m of await compararLista(corpo, { lancar: sub === 'lancar' })) await reply(m);
         return true;
       }
       if (sub === 'semgrupo' || sub === 'sem' || sub === 'vinculo' || sub === 'vinculos') {

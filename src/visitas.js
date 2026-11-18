@@ -433,6 +433,7 @@ const pct = (ok, total) => (total ? Math.round((ok / total) * 100) : 0);
 
 function quando(v) {
   const ref = v.entrada || v.saida || v.ultima_atividade;
+  if (v.origem === 'lista') return `${diaSemana(ref)} ${dataCurta(ref)} · horário não informado 📝`;
   const e = v.entrada ? hora(v.entrada) : '?';
   const hojeBR = dataLonga(new Date());
   let s;
@@ -873,4 +874,95 @@ export async function conferenciaAutomatica() {
       console.error('[conferência]', e.message);
     }
   }
+}
+
+// ---------- comparar com a lista da equipe (colada no WhatsApp) ----------
+// Linhas: NOME <tab> dd/mm/aaaa <tab> QUEM [<tab> dd/mm observação QUEM]
+function lerLista(texto) {
+  const linhas = String(texto).split('\n').map((l) => l.trim()).filter(Boolean);
+  const itens = [];
+  for (const l of linhas) {
+    const m = l.match(/^(.+?)[\t ]{1,}(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)[\t ]+([A-Za-zÀ-ú]+)(?:[\t ]+(.*))?$/);
+    if (!m) continue;
+    itens.push({ nome: m[1].trim(), data: m[2], quem: m[3], extras: [], obs: (m[4] || '').trim() });
+  }
+  // observação "17/11 LIMPEZA CX GORDURA NATHAN" ou "17/11 NATHAN SUBSTITUIR SENSOR PORTÃO":
+  // quem foi = a palavra que é nome de alguém da coluna QUEM
+  const pessoas = new Set(itens.map((i) => normalize(i.quem)));
+  for (const it of itens) {
+    const e = it.obs.match(/^(\d{1,2}\/\d{1,2})\s+(.+)$/);
+    if (!e) continue;
+    const pal = e[2].split(/\s+/);
+    const iq = pal.findIndex((w) => pessoas.has(normalize(w)));
+    const quem = iq >= 0 ? pal[iq] : it.quem;
+    const motivo = pal.filter((_, i) => i !== iq).join(' ').trim();
+    it.extras.push({ data: e[1], motivo, quem });
+  }
+  return itens;
+}
+
+const nomeProprio = (s) => String(s || '').toLowerCase().replace(/(^|\s)\S/g, (x) => x.toUpperCase());
+
+export async function compararLista(texto, { lancar = false } = {}) {
+  const itens = lerLista(texto);
+  if (!itens.length) return ['Não reconheci nenhuma linha. Formato: NOME  dd/mm/aaaa  QUEM (uma por linha, pode colar da planilha).'];
+  const condos = await listCondos();
+  const nomesLista = itens.map((i) => i.nome);
+  const apelidos = await getApelidos();
+  const ok = [], faltam = [], semGrupo = [], lancadas = [];
+
+  for (const it of itens) {
+    const ap = apelidos[normalize(it.nome)];
+    const c = (ap && condos.find((x) => x.condo_key === ap)) || melhorCasamento(it.nome, condos, nomesLista);
+    if (!c) { semGrupo.push(it); continue; }
+    const ini = dataHoraBR(it.data, '00:00');
+    const fim = new Date(ini.getTime() + 86400000);
+    const tem = (await q(
+      `SELECT * FROM visitas WHERE condo_key = $1 AND COALESCE(entrada, saida, ultima_atividade) >= $2 AND COALESCE(entrada, saida, ultima_atividade) < $3 LIMIT 1`,
+      [c.condo_key, ini, fim])).rows[0];
+    if (tem) { ok.push({ it, c, v: tem }); }
+    else {
+      faltam.push({ it, c });
+      if (lancar) {
+        await q(
+          `INSERT INTO visitas (condo_key, condo_nome, vistoriador, tipo, motivo, entrada, ultima_atividade, origem)
+           VALUES ($1,$2,$3,'ordinaria','lançada pela lista',$4,$4,'lista')`,
+          [c.condo_key, c.condo_name, nomeProprio(it.quem), dataHoraBR(it.data, '12:00')]);
+        lancadas.push(it);
+      }
+    }
+    // idas extras anotadas na observação
+    for (const e of it.extras) {
+      const ei = dataHoraBR(e.data, '00:00');
+      const ja = (await q(
+        `SELECT 1 FROM visitas WHERE condo_key = $1 AND COALESCE(entrada, saida, ultima_atividade) >= $2 AND COALESCE(entrada, saida, ultima_atividade) < $3
+           AND (motivo ILIKE $4 OR vistoriador ILIKE $5) LIMIT 1`,
+        [c.condo_key, ei, new Date(ei.getTime() + 86400000), `%${e.motivo.split(' ')[0]}%`, e.quem])).rows.length;
+      if (!ja && lancar) {
+        await q(
+          `INSERT INTO visitas (condo_key, condo_nome, vistoriador, tipo, motivo, entrada, ultima_atividade, origem)
+           VALUES ($1,$2,$3,'extraordinaria',$4,$5,$5,'lista')`,
+          [c.condo_key, c.condo_name, nomeProprio(e.quem), e.motivo.toLowerCase(), dataHoraBR(e.data, '12:00')]);
+      }
+    }
+  }
+  // se a 1ª ida da semana ficou como extra, a correção do início acerta; aqui só garantimos a regra
+  const msgs = [];
+  msgs.push(
+    `📋 *Comparação com a sua lista* (${itens.length} idas)\n\n` +
+    `✅ ${ok.length} já estavam registradas\n❌ ${faltam.length} não estavam no sistema${lancar ? ` → *${lancadas.length} lançadas agora*` : ''}\n` +
+    (semGrupo.length ? `⚠️ ${semGrupo.length} sem grupo da IA (não dá para registrar)\n` : '') +
+    `\nRegistradas: ${itens.length ? Math.round((ok.length / itens.length) * 100) : 0}% da sua lista`
+  );
+  if (faltam.length) {
+    msgs.push(`❌ *Não estavam no sistema*\n\n${faltam.map(({ it, c }) => `• ${it.nome} → ${c.condo_name}\n   ${it.data} · ${nomeProprio(it.quem)}`).join('\n')}` +
+      (lancar ? '' : `\n\nPara lançar todas de uma vez, mande a mesma lista com *!vistorias lancar* na primeira linha.`));
+  }
+  if (semGrupo.length) {
+    msgs.push(`⚠️ *Sem grupo da IA*\n${semGrupo.map((i) => `• ${i.nome} (${i.data})`).join('\n')}\n\nSe o grupo existir com outro nome: _!apelido nome da lista = nome do grupo_`);
+  }
+  if (ok.length && !lancar) {
+    msgs.push(`✅ *Já registradas*\n${ok.map(({ it, v }) => `• ${it.nome} · ${quando(v)}`).join('\n')}`);
+  }
+  return msgs;
 }
