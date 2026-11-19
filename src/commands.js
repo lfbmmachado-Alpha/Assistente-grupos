@@ -669,7 +669,7 @@ export async function handleCommand(msg, suggestionGroup) {
         if (!lider || !nome) { await reply('Use: !leituras grupo Janaina = COND. JANAINA'); return true; }
         const ls = await L.lideres();
         const lid = ls.find((x) => normalize(x) === normalize(lider));
-        if (!lid) { await reply(`"${lider}" não é líder no controle. Líderes: ${ls.join(', ')}`); return true; }
+        if (!lid) { await reply(`"${lider}" não aparece no controle de leituras. Nomes que dá para usar: ${ls.join(', ')}`); return true; }
         const g = await acharGrupo(nome);
         if (!g) { await reply(`Não achei o grupo "${nome}". Adicione a IA no grupo, mande !sincronizar e tente de novo.`); return true; }
         await interno(g.jid);

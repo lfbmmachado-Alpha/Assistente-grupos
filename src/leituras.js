@@ -124,7 +124,11 @@ export async function registrarLista(texto, { origem = 'grupo', avisarFalhas = t
     // uma leitura por condomínio por mês: se a data foi corrigida na lista, troca
     const mes = l.data.slice(0, 7);
     const ja = (await q(`SELECT id, data::text AS data FROM leituras WHERE chave = $1 AND to_char(data, 'YYYY-MM') = $2`, [c.chave, mes])).rows;
-    if (ja.some((x) => x.data === l.data)) continue;
+    if (ja.some((x) => x.data === l.data)) {
+      // já estava (veio da planilha): só completa quem fez
+      if (l.quem) await q(`UPDATE leituras SET quem = $3 WHERE chave = $1 AND data = $2 AND (quem IS NULL OR quem = '')`, [c.chave, l.data, l.quem]);
+      continue;
+    }
     if (ja.length) await q('DELETE FROM leituras WHERE id = ANY($1)', [ja.map((x) => x.id)]);
     await q(`INSERT INTO leituras (chave, data, quem, origem) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING`, [c.chave, l.data, l.quem || null, origem]);
     novas++;
@@ -162,14 +166,17 @@ export async function situacao(ref = hojeBR()) {
     else if (alvo < ini) estado = 'atrasada';
     else if (alvo <= fim) estado = alvo < ref ? 'atrasada' : 'semana';
     else estado = 'futura';
-    itens.push({ ...c, ultima: base?.data || null, alvo, estado, feita: feitaSemana || null });
+    // quem faz a leitura deste condomínio: quem fez a desta semana, senão quem fez a última (lista do grupo de controle)
+    const executor = (feitaSemana?.quem) || [...hist].reverse().find((l) => l.quem)?.quem || null;
+    itens.push({ ...c, ultima: base?.data || null, alvo, estado, feita: feitaSemana || null, executor });
   }
   return { ini, fim, ref, itens };
 }
 
 // ---------- mensagens ----------
 function blocoLider(lider, itens, { ref, ini, fim }, tipo) {
-  const meus = itens.filter((i) => normalize(i.lider || '') === normalize(lider));
+  // vale o líder da planilha (Janaina, Kesse, Ederson) OU quem faz a leitura (Carlos, Samuel, Ygor…)
+  const meus = itens.filter((i) => normalize(i.lider || '') === normalize(lider) || normalize(i.executor || '') === normalize(lider));
   const feitas = meus.filter((i) => i.estado === 'feita').sort((a, b) => a.feita.data.localeCompare(b.feita.data));
   const atras = meus.filter((i) => i.estado === 'atrasada').sort((a, b) => a.alvo.localeCompare(b.alvo));
   const semana = meus.filter((i) => i.estado === 'semana').sort((a, b) => a.alvo.localeCompare(b.alvo));
@@ -197,7 +204,16 @@ function blocoLider(lider, itens, { ref, ini, fim }, tipo) {
 const titulo = (s) => String(s).trim().toLowerCase().replace(/(^|\s)\S/g, (x) => x.toUpperCase()).replace(/ (Da|Das|De|Do|Dos|E) /g, (x) => x.toLowerCase());
 
 export async function lideres() {
-  return (await q(`SELECT DISTINCT lider FROM leituras_cad WHERE ativo AND lider IS NOT NULL AND lider <> '' ORDER BY lider`)).rows.map((r) => r.lider);
+  const l = (await q(`SELECT DISTINCT lider FROM leituras_cad WHERE ativo AND lider IS NOT NULL AND lider <> '' ORDER BY lider`)).rows.map((r) => r.lider);
+  return [...l, ...(await executores()).filter((e) => !l.some((x) => normalize(x) === normalize(e)))];
+}
+// quem fez leituras nos últimos 90 dias (pela lista do grupo de controle)
+export async function executores() {
+  const rows = (await q(`SELECT quem, COUNT(*) AS n FROM leituras WHERE quem IS NOT NULL AND quem <> '' AND data > now() - interval '90 days'
+                          GROUP BY quem ORDER BY n DESC`)).rows;
+  const vistos = new Map();
+  for (const r of rows) { const k = normalize(r.quem); if (k && !vistos.has(k) && !/manual/.test(k)) vistos.set(k, r.quem.trim().replace(/^\w/, (x) => x.toUpperCase())); }
+  return [...vistos.values()];
 }
 
 // Visão geral (para o grupo de sugestões)
