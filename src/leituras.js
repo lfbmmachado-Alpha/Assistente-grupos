@@ -143,6 +143,7 @@ export async function registrarLista(texto, { origem = 'grupo', avisarFalhas = t
         `\n\nSe for um condomínio do controle: *!leituras apelido nome da lista = nome do controle*\nSe for novo: *!leituras incluir Nome = Líder*`);
     }
   }
+  if (novas) await verificarParabens().catch((e) => console.error('[leituras] parabéns', e.message));
   return { linhas: linhas.length, novas, naoAchei };
 }
 
@@ -306,16 +307,41 @@ export async function listarGrupos() {
   const ctrl = await getSetting('leituras_grupo_controle_nome');
   return { lideres: Object.values(m), controle: ctrl };
 }
-export async function enviarAvisos(tipo, { so = null } = {}) {
-  const s = await situacao();
+export async function enviarAvisos(tipo, { so = null, ref = null, automatico = false } = {}) {
+  const s = await situacao(ref || hojeBR());
   const m = await gruposLider();
   let n = 0;
   for (const g of Object.values(m)) {
     if (so && normalize(g.lider) !== normalize(so)) continue;
+    if (automatico && tipo === 'dia') {
+      // cobrança diária só enquanto houver leitura da semana por fazer
+      const meus = s.itens.filter((i) => normalize(i.responsavel || '') === normalize(g.lider));
+      if (!meus.some((i) => i.estado === 'atrasada' || i.estado === 'semana')) continue;
+    }
     await sendText(g.jid, blocoLider(g.lider, s.itens, s, tipo));
     n++;
   }
   return n;
+}
+export function proximaSegunda() { return somaDias(semanaDe(hojeBR()).ini, 7); }
+export async function gruposConfigurados() { return Object.values(await gruposLider()); }
+
+// Semana concluída: parabeniza uma vez no grupo do responsável
+export async function verificarParabens() {
+  const s = await situacao();
+  for (const g of Object.values(await gruposLider())) {
+    const meus = s.itens.filter((i) => normalize(i.responsavel || '') === normalize(g.lider));
+    const feitas = meus.filter((i) => i.estado === 'feita');
+    const pend = meus.filter((i) => i.estado === 'atrasada' || i.estado === 'semana');
+    if (!feitas.length || pend.length) continue;
+    const chave = `leit_parab_${normalize(g.lider)}_${s.ini}`;
+    if (await getSetting(chave)) continue;
+    await setSetting(chave, new Date().toISOString());
+    await sendText(g.jid, `🎉 *Parabéns, ${g.lider}!*\n\nTodas as leituras da semana foram feitas (${feitas.length}):\n` +
+      feitas.sort((a, b) => a.feita.data.localeCompare(b.feita.data)).map((i) => `✅ ${titulo(i.nome)} — ${ddmm(i.feita.data)}`).join('\n') +
+      `\n\nObrigado pelo empenho! 👏`);
+    console.log(`[leituras] parabéns enviado para ${g.lider}`);
+  }
 }
 
 // segunda 07:30: semana · todo dia (seg–sáb) 17:30: feitas e a fazer
@@ -333,7 +359,7 @@ export async function rodarAvisosLeituras() {
   }
   if (dow >= 1 && dow <= 6 && min >= hd * 60 + md && !(await getSetting(`leit_dia_${hoje}`))) {
     await setSetting(`leit_dia_${hoje}`, '1');
-    const n = await enviarAvisos('dia');
+    const n = await enviarAvisos('dia', { automatico: true });
     if (n) console.log(`[leituras] resumo do dia enviado para ${n} grupo(s)`);
   }
 }

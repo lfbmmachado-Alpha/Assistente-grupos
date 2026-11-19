@@ -12,6 +12,21 @@ const app = express();
 app.use(express.json({ limit: '10mb' }));
 
 app.get('/', (_req, res) => res.send('assistente-grupos ok'));
+// Planilha Google: troca do responsável pela leitura feita na coluna "Responsável" da aba Leituras
+app.post('/api/leituras/:token/responsavel', async (req, res) => {
+  try {
+    const { getSetting } = await import('./db.js');
+    const tok = await getSetting('planilha_token');
+    if (!tok || req.params.token !== tok) return res.sendStatus(401);
+    const { condominio, responsavel } = req.body || {};
+    if (!condominio || !responsavel) return res.status(400).json({ erro: 'condominio e responsavel' });
+    const { definirResponsavel } = await import('./leituras.js');
+    const c = await definirResponsavel(String(condominio), String(responsavel).trim());
+    if (!c) return res.status(404).json({ erro: 'condomínio não encontrado' });
+    console.log(`[leituras] responsável de ${c.nome} → ${responsavel} (pela planilha)`);
+    res.json({ ok: true, condominio: c.nome, responsavel });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
 // Planilha Google de idas: o Apps Script lê daqui (token próprio, gerado pelo !planilha)
 app.get('/api/idas/:token', async (req, res) => {
   try {

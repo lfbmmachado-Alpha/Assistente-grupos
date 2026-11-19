@@ -61,6 +61,7 @@ Citando um condomínio, ela foca nele — ex.: _como está o clima no Floresta?_
 !planilha — link para a planilha Google com todas as idas ([novo] troca o link)
 !custos [ontem] — consumo do Gemini por tarefa (tokens e estimativa em US$)
 !leituras — controle das leituras mensais (!leituras ajuda para os comandos)
+!enviar leituras Nathan [próxima semana|semana|hoje] — manda o alerta de leituras no grupo do responsável
 !vistorias reler — relê as mensagens da semana (visita que não apareceu)
 !vistorias diagnostico Nome — mostra por que um condomínio está sem vistoria
 !vistorias sem grupo — condomínios do quadro sem grupo da IA e grupos fora do quadro
@@ -617,6 +618,23 @@ export async function handleCommand(msg, suggestionGroup) {
       const e = { jid: g.jid, nome: g.name, vistoriador: vist, hora, dias: semFds };
       await salvarEnvio(e);
       await reply(`✅ Programado: relatório de *${vist}* no grupo *${g.name}* todo dia${semFds ? ' (sem fim de semana)' : ''} às *${hora}*.\nPara ver agora como fica: !envio testar ${(await listarEnvios()).length}`);
+      return true;
+    }
+
+    case 'enviar': {
+      // !enviar leituras Nathan [próxima semana | semana | hoje]
+      if (!/^leituras?$/.test(normalize(args[0] || ''))) { await reply('Use: !enviar leituras Nathan próxima semana  (ou: semana · hoje)'); return true; }
+      const L = await import('./leituras.js');
+      const t = normalize(args.slice(1).join(' '));
+      const proxima = /proxima/.test(t);
+      const tipo = proxima || /semana/.test(t) ? 'semana' : 'dia';
+      const nome = args.slice(1).join(' ').replace(/(^|\s)(pr[oó]xima|semana|hoje|da|de|na)(?=\s|$)/gi, ' ').replace(/\s+/g, ' ').trim();
+      if (!nome) { await reply('Diga para quem: !enviar leituras Nathan próxima semana'); return true; }
+      const grupos = await L.gruposConfigurados();
+      const g = grupos.find((x) => normalize(x.lider) === normalize(nome));
+      if (!g) { await reply(`${nome} ainda não tem grupo de leituras (crie o grupo "COND. ${nome.toUpperCase()}" com a IA dentro). Com grupo: ${grupos.map((x) => x.lider).join(', ') || 'nenhum'}`); return true; }
+      await L.enviarAvisos(tipo, { so: g.lider, ref: proxima ? L.proximaSegunda() : null });
+      await reply(`📤 Alerta de leituras de *${g.lider}* (${proxima ? 'próxima semana' : tipo === 'semana' ? 'esta semana' : 'hoje'}) enviado em *${g.nome}*.`);
       return true;
     }
 

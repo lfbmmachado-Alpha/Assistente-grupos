@@ -47,9 +47,11 @@ function onOpen() {
 
 function instalarGatilho() {
   ScriptApp.getProjectTriggers()
-    .filter((t) => t.getHandlerFunction() === 'atualizarIdas')
+    .filter((t) => ['atualizarIdas', 'aoEditar'].indexOf(t.getHandlerFunction()) >= 0)
     .forEach((t) => ScriptApp.deleteTrigger(t));
   ScriptApp.newTrigger('atualizarIdas').timeBased().everyMinutes(10).create();
+  // troca de responsável na aba Leituras vai para o sistema na hora
+  ScriptApp.newTrigger('aoEditar').forSpreadsheet(planilha()).onEdit().create();
   atualizarIdas();
   try { planilha().toast('Atualização automática ligada (a cada 10 min).', 'Alpha'); } catch (e) {}
 }
@@ -295,4 +297,26 @@ function escreverLeituras(ss, L) {
   ];
   if (ultimoMes) regras.unshift(SpreadsheetApp.newConditionalFormatRule().whenCellNotEmpty().setBackground(AZUL_CLARO).setRanges([ultimoMes]).build());
   sh.setConditionalFormatRules(regras);
+}
+
+// ---------------------------------------------------------------- edição do responsável (aba Leituras)
+// Ao mudar a coluna "Responsável", o sistema passa a cobrar a leitura dessa pessoa a partir do próximo aviso.
+function aoEditar(e) {
+  try {
+    const sh = e.range.getSheet();
+    if (sh.getName() !== ABA_LEITURAS || e.range.getColumn() !== 2 || e.range.getRow() < 2) return;
+    const linhas = e.range.getNumRows();
+    for (let i = 0; i < linhas; i++) {
+      const r = e.range.getRow() + i;
+      const condominio = sh.getRange(r, 1).getValue();
+      const responsavel = String(sh.getRange(r, 2).getValue() || '').trim();
+      if (!condominio || !responsavel) continue;
+      const url = URL_IDAS.replace('/api/idas/', '/api/leituras/') + '/responsavel';
+      const res = UrlFetchApp.fetch(url, { method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+        payload: JSON.stringify({ condominio: condominio, responsavel: responsavel }) });
+      const ok = res.getResponseCode() === 200;
+      sh.getRange(r, 2).setNote(ok ? 'Responsável atualizado no sistema em ' + Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'dd/MM HH:mm')
+        : 'Não consegui atualizar no sistema (' + res.getResponseCode() + ')');
+    }
+  } catch (err) { console.error(err); }
 }
