@@ -237,9 +237,10 @@ export async function executarAnalise(chat, msgs) {
     interno = await messagesSince(internos.map((c) => c.jid), config.internalDays * 24, config.internalMessages);
   }
 
+  const regras = await getList('regras_atendimento');
   const conhecimento = chat.condo_key
-    ? { fatos: await fatosDo(chat.condo_key), docs: await docsDo(chat.condo_key), exemplos: await exemplosPara(chat.condo_key) }
-    : {};
+    ? { fatos: await fatosDo(chat.condo_key), docs: await docsDo(chat.condo_key), exemplos: await exemplosPara(chat.condo_key), regras }
+    : { regras };
   const a = await analisar({ chat, historico, novas, interno, conhecimento });
   console.log(`[análise] "${chat.name}" → ${a?.precisa_atencao ? 'AVISAR' : 'não precisa'} (${a?.categoria || '-'}, ${a?.urgencia || '-'}) ${a?.resumo || ''}`);
   if (!a?.precisa_atencao) return;

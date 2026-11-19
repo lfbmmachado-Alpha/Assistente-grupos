@@ -81,6 +81,7 @@ Planilha com legenda *!vistorias importar* — condomínios e vistoriadores
 *Conhecimento*
 !base Nome — o que a IA já sabe do condomínio
 !fato Nome: texto — ensina um fato à mão
+!regra texto — ensina uma regra de atendimento para todos os condomínios (!regras lista, !regra remover N)
 !esquecer N — apaga o fato N da última !base
 !aprender — atualiza a base agora (roda sozinho a cada 3h)
 !doc Nome Título — na legenda de um PDF (regimento, convenção…)
@@ -320,6 +321,31 @@ export async function handleCommand(msg, suggestionGroup) {
         (docs.length ? `\n\n📄 Documentos: ${docs.map((d) => d.titulo).join(', ')}` : '') +
         `\n\nPara apagar: !esquecer N · ✍️ = cadastrado à mão`
       );
+      return true;
+    }
+
+    case 'regra':
+    case 'regras': {
+      // Regras de atendimento que valem para TODOS os condomínios (treinamento das sugestões)
+      const regras = await getList('regras_atendimento');
+      const sub = normalize(args[0] || '');
+      if (cmd === 'regras' || !resto.trim()) {
+        await reply(regras.length
+          ? `📚 *Regras de atendimento* (valem para todos os condomínios)\n\n${regras.map((r, i) => `${i + 1}. ${r}`).join('\n\n')}\n\nNova: *!regra texto* · Tirar: *!regra remover N*`
+          : 'Nenhuma regra ensinada ainda (o roteiro padrão de triagem já vale).\nEx.: *!regra Em problema de portão, sempre perguntar se testou outro controle e se outro morador consegue abrir.*');
+        return true;
+      }
+      if (sub === 'remover' || sub === 'apagar' || sub === 'tirar') {
+        const n = Number(args[1]);
+        if (!n || !regras[n - 1]) { await reply('Use: !regra remover N (veja os números em *!regras*)'); return true; }
+        const [tirada] = regras.splice(n - 1, 1);
+        await setSetting('regras_atendimento', JSON.stringify(regras));
+        await reply(`🗑️ Regra removida: ${tirada}`);
+        return true;
+      }
+      regras.push(resto.trim());
+      await setSetting('regras_atendimento', JSON.stringify(regras));
+      await reply(`📚 Aprendido. Vale para as próximas sugestões de todos os condomínios:\n_${resto.trim()}_\n\nVer todas: *!regras*`);
       return true;
     }
 

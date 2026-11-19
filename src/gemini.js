@@ -94,10 +94,30 @@ Regras da sugestão de resposta:
   Copie o estilo, nunca o conteúdo de outro caso.
 - NUNCA invente informação (valores, datas, nomes de fornecedores, horários, artigos de regimento).
   Se faltar dado, a sugestão deve dizer que vai verificar e retornar, ou fazer uma pergunta.
+- TRIAGEM ANTES DE AGIR (obrigatório em relato de problema): antes de prometer técnico, orçamento ou providência,
+  a sugestão faz as perguntas que mostram se o problema é DO CONDOMÍNIO (área comum) ou SÓ DA UNIDADE/DA PESSOA.
+  Siga o ROTEIRO DE ATENDIMENTO abaixo. Pergunte de forma gentil, no máximo 2 ou 3 perguntas, e diga que,
+  com a resposta, a administradora já encaminha. Se a resposta já estiver no histórico, não pergunte de novo:
+  use-a. Urgência real (alguém preso no elevador, vazamento grande, cheiro de gás, risco à segurança) vem antes:
+  oriente a ação imediata e só depois pergunte.
 - Em grupo de moradores, nunca exponha inadimplência, valores devidos por unidade, dados pessoais ou
   conflitos internos. Para esses assuntos, sugira chamar a pessoa no privado.
 - Use o CONTEXTO INTERNO (grupos de síndico/conselho) apenas para orientar o Luiz na nota_interna;
   não revele esse conteúdo na sugestão.
+
+ROTEIRO DE ATENDIMENTO (perguntas de triagem por tipo de problema):
+- Falta de água, energia, gás, interfone, internet/TV ou sinal: "O problema é só na sua unidade ou os vizinhos também estão sem?";
+  energia: "Já conferiu o disjuntor do seu quadro?"; água: "Os registros da unidade estão abertos?".
+- Portão, garagem ou controle remoto: "Já testou com outro controle?"; "Outro morador consegue abrir normalmente?";
+  "O controle está com bateria/pilha nova e com a luz acendendo?"; "Acontece em qual portão (garagem, pedestre, social)?".
+- Tag, biometria ou acesso: "Acontece só com a sua tag/digital ou com outras também?"; "Em qual leitor?".
+- Elevador: "Está parado em qual andar?"; "Tem alguém preso?" (se sim, é urgente: oriente acionar o botão de alarme e a
+  empresa de manutenção); "Os dois elevadores estão com o problema ou só um?".
+- Vazamento, infiltração ou umidade: "Em qual cômodo e em que ponto (teto, parede, piso)?"; "Consegue mandar uma foto?";
+  "Começou quando? Piora com chuva?" — para saber se vem da área comum, da unidade de cima ou da própria unidade.
+- Barulho ou vizinho: "Em que horário acontece?"; "Consegue identificar de qual unidade vem?".
+- Lâmpada, iluminação ou equipamento da área comum: "Em qual local exatamente (andar, bloco, garagem)?".
+REGRAS ENSINADAS PELO LUIZ (têm prioridade sobre o roteiro acima, quando houver) vêm na mensagem, se existirem.
 
 Responda SOMENTE com JSON:
 {
@@ -129,7 +149,10 @@ export async function analisar({ chat, historico, novas, interno, conhecimento =
     `\nHISTÓRICO RECENTE:\n${historico.map(linha).join('\n') || '(vazio)'}`,
     `\nMENSAGENS NOVAS PARA AVALIAR:\n${novas.map(linha).join('\n')}`,
   ];
-  const { fatos = [], docs = [], exemplos = [] } = conhecimento;
+  const { fatos = [], docs = [], exemplos = [], regras = [] } = conhecimento;
+  if (regras.length) {
+    partes.push(`\nREGRAS ENSINADAS PELO LUIZ (siga sempre):\n${regras.map((r) => `- ${r}`).join('\n')}`);
+  }
   if (fatos.length) {
     partes.push(`\nBASE DE CONHECIMENTO DO CONDOMÍNIO (aprendida das conversas):\n${fatos.map((f) => `- ${f.fato}`).join('\n')}`);
   }
