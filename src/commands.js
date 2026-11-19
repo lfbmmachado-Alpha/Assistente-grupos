@@ -635,7 +635,7 @@ export async function handleCommand(msg, suggestionGroup) {
       const AJUDA = '📏 *Leituras — comandos*\n' +
         '!leituras — situação da semana (todos os líderes)\n!leituras Janaina — só de um líder\n' +
         '!leituras controle = Nome do grupo — grupo onde a equipe manda a lista de leituras feitas\n' +
-        '!leituras grupo Janaina = COND. JANAINA — onde avisar cada líder\n!leituras grupos — ver configuração\n' +
+        '!leituras grupo Carlos = COND. CARLOS — onde avisar cada responsável\n!leituras grupos — ver configuração\n!leituras responsaveis — quem cuida de cada condomínio\n!leituras responsavel Antares = Carlos — troca um\n' +
         '!leituras enviar [semana|dia] [Líder] — manda os avisos agora\n!leituras importar + lista colada abaixo\n' +
         '!leitura feita Nome dd/mm (Quem)\n!leituras apelido nome da lista = nome do controle\n' +
         '!leituras incluir Nome = Líder · !leituras remover Nome\n!leituras horario semana 07:30 · !leituras horario dia 17:30';
@@ -669,12 +669,26 @@ export async function handleCommand(msg, suggestionGroup) {
         if (!lider || !nome) { await reply('Use: !leituras grupo Janaina = COND. JANAINA'); return true; }
         const ls = await L.lideres();
         const lid = ls.find((x) => normalize(x) === normalize(lider));
-        if (!lid) { await reply(`"${lider}" não aparece no controle de leituras. Nomes que dá para usar: ${ls.join(', ')}`); return true; }
+        if (!lid) { await reply(`"${lider}" não é responsável por nenhum condomínio nas leituras. Responsáveis: ${ls.join(', ')}\nVer quem cuida de cada um: !leituras responsaveis`); return true; }
         const g = await acharGrupo(nome);
         if (!g) { await reply(`Não achei o grupo "${nome}". Adicione a IA no grupo, mande !sincronizar e tente de novo.`); return true; }
         await interno(g.jid);
         await L.definirGrupoLider(lid, g);
         await reply(`✅ Leituras de *${lid}* serão avisadas em *${g.name}*: segunda 07:30 (semana) e de seg a sáb 17:30 (feitas e a fazer).\nPara ver como fica: *!leituras enviar semana ${lid}*`);
+        return true;
+      }
+      if (sub === 'responsavel' || sub === 'responsaveis') {
+        if (sub === 'responsaveis' || !resto1.includes('=')) {
+          const m = await L.porResponsavel();
+          const tit = (x) => String(x).trim().toLowerCase().replace(/(^|\s)\S/g, (y) => y.toUpperCase()).replace(/ (Da|Das|De|Do|Dos|E) /g, (y) => y.toLowerCase());
+          await reply(`👤 *Leituras por responsável* (vem do quadro de vistorias de cada condomínio)\n\n` +
+            [...m.entries()].sort().map(([p, l]) => `*${p}* (${l.length})\n${l.map((i) => tit(i.nome)).join(' · ')}`).join('\n\n') +
+            `\n\nPara trocar um: *!leituras responsavel Antares = Carlos*`);
+          return true;
+        }
+        const [nome, pessoa] = resto1.split('=').map((x) => (x || '').trim());
+        const c = nome && pessoa ? await L.definirResponsavel(nome, pessoa) : null;
+        await reply(c ? `✅ Leitura do *${c.nome}* fica com *${pessoa}*.` : 'Use: !leituras responsavel Antares = Carlos');
         return true;
       }
       if (sub === 'grupos') {

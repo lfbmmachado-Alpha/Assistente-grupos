@@ -63,9 +63,9 @@ function lev(a, b) {
   for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
   return d[m][n];
 }
-export async function acharCondominio(nome, cad = null) {
+export async function acharCondominio(nome, cad = null, { usarApelidos = true } = {}) {
   cad = cad || (await q('SELECT * FROM leituras_cad WHERE ativo')).rows;
-  const ap = await apelidos();
+  const ap = usarApelidos ? await apelidos() : {};
   const n = normalize(nome);
   if (!n) return null;
   if (ap[n]) return cad.find((c) => c.chave === ap[n]) || null;
@@ -153,6 +153,8 @@ export async function situacao(ref = hojeBR()) {
   const leit = (await q(`SELECT chave, data::text AS data, quem FROM leituras ORDER BY data`)).rows;
   const porCondo = new Map();
   for (const l of leit) porCondo.set(l.chave, [...(porCondo.get(l.chave) || []), l]);
+  // Responsável pela leitura = o do CONDOMÍNIO: definido à mão (!leituras responsavel) ou o do quadro de vistorias
+  const resp = await responsaveis(cad);
   const itens = [];
   for (const c of cad) {
     const hist = porCondo.get(c.chave) || [];
@@ -168,15 +170,14 @@ export async function situacao(ref = hojeBR()) {
     else estado = 'futura';
     // quem faz a leitura deste condomínio: quem fez a desta semana, senão quem fez a última (lista do grupo de controle)
     const executor = (feitaSemana?.quem) || [...hist].reverse().find((l) => l.quem)?.quem || null;
-    itens.push({ ...c, ultima: base?.data || null, alvo, estado, feita: feitaSemana || null, executor });
+    itens.push({ ...c, ultima: base?.data || null, alvo, estado, feita: feitaSemana || null, executor, responsavel: resp.get(c.chave) || executor || null });
   }
   return { ini, fim, ref, itens };
 }
 
 // ---------- mensagens ----------
 function blocoLider(lider, itens, { ref, ini, fim }, tipo) {
-  // vale o líder da planilha (Janaina, Kesse, Ederson) OU quem faz a leitura (Carlos, Samuel, Ygor…)
-  const meus = itens.filter((i) => normalize(i.lider || '') === normalize(lider) || normalize(i.executor || '') === normalize(lider));
+  const meus = itens.filter((i) => normalize(i.responsavel || '') === normalize(lider));
   const feitas = meus.filter((i) => i.estado === 'feita').sort((a, b) => a.feita.data.localeCompare(b.feita.data));
   const atras = meus.filter((i) => i.estado === 'atrasada').sort((a, b) => a.alvo.localeCompare(b.alvo));
   const semana = meus.filter((i) => i.estado === 'semana').sort((a, b) => a.alvo.localeCompare(b.alvo));
@@ -204,9 +205,48 @@ function blocoLider(lider, itens, { ref, ini, fim }, tipo) {
 const titulo = (s) => String(s).trim().toLowerCase().replace(/(^|\s)\S/g, (x) => x.toUpperCase()).replace(/ (Da|Das|De|Do|Dos|E) /g, (x) => x.toLowerCase());
 
 export async function lideres() {
-  const l = (await q(`SELECT DISTINCT lider FROM leituras_cad WHERE ativo AND lider IS NOT NULL AND lider <> '' ORDER BY lider`)).rows.map((r) => r.lider);
-  return [...l, ...(await executores()).filter((e) => !l.some((x) => normalize(x) === normalize(e)))];
+  const s = await situacao();
+  const vistos = new Map();
+  for (const i of s.itens) if (i.responsavel && !vistos.has(normalize(i.responsavel))) vistos.set(normalize(i.responsavel), i.responsavel);
+  return [...vistos.values()].sort();
 }
+
+// condomínio → responsável: 1º o definido à mão; 2º o do quadro de vistorias (mesmo condomínio, nome casado)
+async function responsaveis(cad) {
+  let manual = {};
+  try { manual = JSON.parse(await getSetting('leituras_responsaveis', '{}')); } catch {}
+  let quadro = [];
+  try {
+    quadro = (await q('SELECT condo_nome, vistoriador FROM carteira WHERE ativo')).rows
+      .map((r) => ({ chave: normalize(r.condo_nome), nome: r.condo_nome, vistoriador: r.vistoriador }));
+  } catch {}
+  const m = new Map();
+  for (const c of cad) {
+    if (manual[c.chave]) { m.set(c.chave, manual[c.chave]); continue; }
+    const x = quadro.length ? await acharCondominio(c.nome, quadro, { usarApelidos: false }) : null;
+    if (x) m.set(c.chave, x.vistoriador);
+  }
+  return m;
+}
+export async function definirResponsavel(nome, pessoa) {
+  const c = await acharCondominio(nome);
+  if (!c) return null;
+  let manual = {};
+  try { manual = JSON.parse(await getSetting('leituras_responsaveis', '{}')); } catch {}
+  manual[c.chave] = pessoa;
+  await setSetting('leituras_responsaveis', JSON.stringify(manual));
+  return c;
+}
+export async function porResponsavel() {
+  const s = await situacao();
+  const m = new Map();
+  for (const i of s.itens) {
+    const k = i.responsavel || '— sem responsável';
+    m.set(k, [...(m.get(k) || []), i]);
+  }
+  return m;
+}
+
 // quem fez leituras nos últimos 90 dias (pela lista do grupo de controle)
 export async function executores() {
   const rows = (await q(`SELECT quem, COUNT(*) AS n FROM leituras WHERE quem IS NOT NULL AND quem <> '' AND data > now() - interval '90 days'
@@ -220,9 +260,11 @@ export async function executores() {
 export async function relatorioLeituras(filtro = '') {
   const s = await situacao();
   const ls = (await lideres()).filter((l) => !filtro || normalize(l).includes(normalize(filtro)));
-  if (!ls.length) return [`Não achei o líder "${filtro}". Líderes: ${(await lideres()).join(', ')}`];
+  if (!ls.length) return [`Não achei "${filtro}". Responsáveis: ${(await lideres()).join(', ')}`];
   const msgs = ls.map((l) => blocoLider(l, s.itens, s, 'dia'));
   const sem = s.itens.filter((i) => i.estado === 'sem_historico');
+  const semResp = s.itens.filter((i) => !i.responsavel);
+  if (!filtro && semResp.length) msgs.push(`👤 *Sem responsável* (use !leituras responsavel Nome = Pessoa): ${semResp.map((i) => titulo(i.nome)).join(' · ')}`);
   if (!filtro && sem.length) msgs.push(`❔ *Sem leitura registrada* (não dá para calcular a data): ${sem.map((i) => titulo(i.nome)).join(' · ')}`);
   return msgs;
 }
