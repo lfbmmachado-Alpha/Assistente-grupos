@@ -503,29 +503,31 @@ export async function relatorio(offset = 0, { apenasPendentes = false, so = null
     (!temCarteira ? `\n\n_Sem planilha de vistoriadores: usando os condomínios dos grupos._` : '')
   );
 
-  const SEP = '━━━━━━━━━━━━━━━━';
+  // Formato compacto: uma linha por condomínio, pendentes corridos, sem linhas em branco entre itens
+  const curtoQuando = (x) => quando(x).replace(' · ', ' ').replace('horário não informado 📝', '📝').replace('🟢 *em andamento*', '🟢 em andamento');
   for (const v of vistoriadores) {
     const g = grupos.get(v);
     const t = g.ok.length + g.pend.length + g.sem.length;
     if (apenasPendentes && !g.pend.length && !g.sem.length) continue;
-    let m = `${SEP}\n👷 *${v.toUpperCase()}*\n${SEP}\n${g.ok.length} de ${t} vistoriados (${pct(g.ok.length, t)}%)\n`;
+    const partes = [`👷 *${v.toUpperCase()}* · ${g.ok.length}/${t} (${pct(g.ok.length, t)}%)`];
 
     // 1º o que foi feito, na ordem em que aconteceu
     if (!apenasPendentes && g.ok.length) {
       const feitos = g.ok.sort((a, b) => refVis(a.v) - refVis(b.v)).map(({ it, v: x }) =>
-        `• *${it.nome}*\n   ${quando(x)}${x.vistoriador && normalize(x.vistoriador) !== normalize(v) ? ` · _feita por ${x.vistoriador}_` : ''}` +
-        (x.motivo && !/vistori/i.test(x.motivo) ? `\n   _${x.motivo}_` : ''));
-      m += `\n✅ *Vistoriados (${g.ok.length})*\n\n${feitos.join('\n\n')}\n`;
+        `• *${it.nome}* ${curtoQuando(x)}` +
+        (x.vistoriador && normalize(x.vistoriador) !== normalize(v) ? ` · ${x.vistoriador}` : '') +
+        (x.motivo && !/vistori|lan[cç]ada pela lista/i.test(x.motivo) ? ` · _${x.motivo}_` : ''));
+      partes.push(`✅ *Feitas (${g.ok.length})*\n${feitos.join('\n')}`);
     }
-    if (g.pend.length) m += `\n\n❌ *Pendentes (${g.pend.length})*\n\n${g.pend.map((it) => `• ${it.nome}`).join('\n')}\n`;
-    if (g.sem.length) m += `\n\n⚠️ *Sem grupo da IA (${g.sem.length})*\n\n${g.sem.map((it) => `• ${it.nome}`).join('\n')}\n`;
+    if (g.pend.length) partes.push(`❌ *Pendentes (${g.pend.length})*\n${g.pend.map((it) => it.nome).join(' · ')}`);
+    if (g.sem.length) partes.push(`⚠️ *Sem grupo da IA (${g.sem.length})*\n${g.sem.map((it) => it.nome).join(' · ')}`);
     if (!apenasPendentes && g.extras.length) {
       const ex = g.extras.sort((a, b) => refVis(a.v) - refVis(b.v)).map(({ it, v: x }) =>
-        `• *${it.nome}*\n   ${quando(x)}${x.motivo ? `\n   _${x.motivo}_` : ''}`);
-      m += `\n\n➕ *Idas extras (${g.extras.length})*\n\n${ex.join('\n\n')}\n`;
+        `• *${it.nome}* ${curtoQuando(x)}${x.motivo ? ` · _${x.motivo}_` : ''}`);
+      partes.push(`➕ *Idas extras (${g.extras.length})*\n${ex.join('\n')}`);
     }
-    if (!g.pend.length && !g.sem.length) m += `\n\n🎉 Todos vistoriados nesta semana.`;
-    msgs.push(m.trim());
+    if (!g.pend.length && !g.sem.length) partes.push('🎉 Todos vistoriados nesta semana.');
+    msgs.push(partes.join('\n\n'));
   }
 
   if (!apenasPendentes && fora.length && !so) {
@@ -1009,4 +1011,39 @@ export async function apagarVisitas(nome, data) {
   await ajustarOrdinarias(); // se apagou a ordinária, a próxima ida da semana passa a contar
   return `🗑️ *${rotulo}*: apaguei ${vis.length} ida(s):\n${vis.map((v) => `• ${quando(v)} ${v.vistoriador}${v.motivo ? ` _(${v.motivo})_` : ''}`).join('\n')}\n\n` +
     `A verificação não registra de novo nesse dia. O condomínio volta para pendente se não houver outra ida na semana.`;
+}
+
+// ---------- planilha Google: todas as idas (lida pelo Apps Script em /api/idas/<token>) ----------
+const ORIGEM_TXT = { grupo: 'Grupo', manual: 'Lançada à mão', verificacao: 'Verificação geral', lista: 'Lista da equipe' };
+export async function planilhaIdas() {
+  const { itens } = await universo();
+  const porKey = new Map(itens.filter((i) => i.condo_key).map((i) => [i.condo_key, i]));
+  const rows = (await q(`SELECT * FROM visitas ORDER BY COALESCE(entrada, saida, ultima_atividade), id`)).rows;
+  const semanaDe = (d) => { const { inicio } = semana(0, new Date(d)); return dataLonga(inicio); };
+  return rows.map((v) => {
+    const ref = v.entrada || v.saida || v.ultima_atividade;
+    const it = porKey.get(v.condo_key);
+    const semHora = v.origem === 'lista';
+    const ent = v.entrada && !semHora ? hora(v.entrada) : '';
+    const sai = v.saida && !semHora ? hora(v.saida) : '';
+    const min = v.entrada && v.saida && !semHora ? Math.round((new Date(v.saida) - new Date(v.entrada)) / 60000) : null;
+    return {
+      id: v.id,
+      data: ref ? dataLonga(ref) : '',
+      dia: ref ? diaSemana(ref) : '',
+      semana: ref ? semanaDe(ref) : '',
+      mes: ref ? fmt(ref, { month: '2-digit', year: 'numeric' }) : '',
+      condominio: it?.nome || v.condo_nome || v.condo_key,
+      responsavel: it?.vistoriador || '',
+      quem: v.vistoriador || '',
+      tipo: v.tipo === 'ordinaria' ? 'Vistoria da semana' : 'Ida extra',
+      motivo: v.motivo && !/lan[cç]ada pela lista/i.test(v.motivo) ? v.motivo : '',
+      entrada: ent,
+      saida: sai,
+      saida_estimada: v.saida && v.saida_estimada ? 'Sim' : '',
+      duracao: min != null && min >= 0 ? `${Math.floor(min / 60)}:${String(min % 60).padStart(2, '0')}` : '',
+      origem: ORIGEM_TXT[v.origem] || v.origem || '',
+      evidencia: (v.entrada_txt || '').slice(0, 200),
+    };
+  });
 }

@@ -1,5 +1,5 @@
 import { config } from './config.js';
-import { pool, setSetting, upsertChat, listCondos, listPending, resolveById, stats, getChat } from './db.js';
+import { pool, setSetting, getSetting, upsertChat, listCondos, listPending, resolveById, stats, getChat } from './db.js';
 import { fetchAllGroups, getMediaBase64 } from './evolution.js';
 import { lerDocumento } from './gemini.js';
 import {
@@ -58,6 +58,7 @@ Citando um condomínio, ela foca nele — ex.: _como está o clima no Floresta?_
 !vistorias passada — semana anterior
 !vistorias Nome — visitas de um condomínio
 !vistorias exportar [mm/aaaa] — planilha Excel
+!planilha — link para a planilha Google com todas as idas ([novo] troca o link)
 !vistorias reler — relê as mensagens da semana (visita que não apareceu)
 !vistorias diagnostico Nome — mostra por que um condomínio está sem vistoria
 !vistorias sem grupo — condomínios do quadro sem grupo da IA e grupos fora do quadro
@@ -753,6 +754,18 @@ export async function handleCommand(msg, suggestionGroup) {
       return true;
     }
 
+    case 'planilha': {
+      // Link que o Apps Script da planilha Google usa para buscar todas as idas
+      let tok = await getSetting('planilha_token');
+      if (!tok || normalize(args[0] || '') === 'novo') {
+        tok = (await import('crypto')).randomBytes(18).toString('base64url');
+        await setSetting('planilha_token', tok);
+      }
+      const dom = process.env.RAILWAY_PUBLIC_DOMAIN || 'assistente-grupos-production-f2a1.up.railway.app';
+      await reply(`📊 *Planilha Google de idas*\n\nCole este link na 1ª linha do script da planilha (URL_IDAS):\n\nhttps://${dom}/api/idas/${tok}\n\n` +
+        `Não compartilhe o link: quem tiver acesso vê todas as idas. Para trocar (o antigo para de funcionar): *!planilha novo*`);
+      return true;
+    }
     case 'status': {
       const s = await stats();
       const teste = await getList('test_condos');

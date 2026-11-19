@@ -11,6 +11,16 @@ const app = express();
 app.use(express.json({ limit: '10mb' }));
 
 app.get('/', (_req, res) => res.send('assistente-grupos ok'));
+// Planilha Google de idas: o Apps Script lê daqui (token próprio, gerado pelo !planilha)
+app.get('/api/idas/:token', async (req, res) => {
+  try {
+    const { getSetting } = await import('./db.js');
+    const tok = await getSetting('planilha_token');
+    if (!tok || req.params.token !== tok) return res.sendStatus(401);
+    const { planilhaIdas } = await import('./visitas.js');
+    res.json({ atualizado: new Date().toISOString(), idas: await planilhaIdas() });
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
 
 // Aceita /webhook/<token> e /webhook/<token>/<evento> (caso "Webhook by events" esteja ligado)
 app.post(['/webhook/:token', '/webhook/:token/:event'], (req, res) => {
