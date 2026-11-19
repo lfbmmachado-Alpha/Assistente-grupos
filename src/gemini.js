@@ -36,13 +36,82 @@ async function trocarModeloSeDescontinuado(url, res) {
   return url.replace(`/models/${antigo}:`, `/models/${novo}:`);
 }
 
-async function chamarGemini(url, opt) {
+// ---------- consumo: tokens por tarefa e por dia (comando !custos) ----------
+// Preço por 1 milhão de tokens (US$), tabela pública do Gemini; "pensamento" é cobrado como saída.
+const PRECOS = {
+  'gemini-2.5-flash': [0.30, 2.50],
+  'gemini-2.5-flash-lite': [0.10, 0.40],
+  'gemini-2.5-pro': [1.25, 10.00],
+};
+export const usoHoje = { dia: null, tarefas: {} };
+let salvarUsoTimer = null;
+function diaHoje() { return new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10); }
+async function registrarUso(tarefa, modelo, u) {
+  if (!u) return;
+  const dia = diaHoje();
+  if (usoHoje.dia !== dia) {
+    usoHoje.dia = dia;
+    usoHoje.tarefas = {};
+    try {
+      const { getSetting } = await import('./db.js');
+      Object.assign(usoHoje.tarefas, JSON.parse((await getSetting(`uso_${dia}`)) || '{}'));
+    } catch {}
+  }
+  const k = `${tarefa}|${modelo}`;
+  const t = usoHoje.tarefas[k] || (usoHoje.tarefas[k] = { chamadas: 0, entrada: 0, saida: 0, pensamento: 0 });
+  t.chamadas++;
+  t.entrada += u.promptTokenCount || 0;
+  t.saida += u.candidatesTokenCount || 0;
+  t.pensamento += u.thoughtsTokenCount || 0;
+  clearTimeout(salvarUsoTimer);
+  salvarUsoTimer = setTimeout(async () => {
+    try { const { setSetting } = await import('./db.js'); await setSetting(`uso_${usoHoje.dia}`, JSON.stringify(usoHoje.tarefas)); } catch {}
+  }, 5000);
+}
+export function custoEstimado(modelo, t) {
+  const p = PRECOS[modelo];
+  if (!p) return null;
+  return (t.entrada * p[0] + (t.saida + t.pensamento) * p[1]) / 1e6;
+}
+
+// Sem "pensamento" nas tarefas simples (é o que mais encarece). A conversa livre pensa um pouco.
+function comPensamentoControlado(opt, modelo, tarefa) {
   try {
-    let res = await fetch(url, opt);
+    const body = JSON.parse(opt.body);
+    body.generationConfig = body.generationConfig || {};
+    if (body.generationConfig.thinkingConfig) return opt;
+    const conversa = /conversa/i.test(tarefa);
+    if (/^gemini-2\.5-(flash|flash-lite)/.test(modelo)) body.generationConfig.thinkingConfig = { thinkingBudget: conversa ? 1024 : 0 };
+    else if (/^gemini-3/.test(modelo)) body.generationConfig.thinkingConfig = { thinkingLevel: conversa ? 'low' : 'minimal' };
+    else return opt;
+    return { ...opt, body: JSON.stringify(body) };
+  } catch { return opt; }
+}
+let pensamentoRecusado = new Set(); // modelos que não aceitaram a configuração: manda sem
+
+async function chamarGemini(url, opt, tarefa = 'Outros') {
+  try {
+    const modeloDe = (u) => (u.match(/\/models\/([^:]+):/) || [])[1] || '';
+    let modelo = modeloDe(url);
+    let optUsado = pensamentoRecusado.has(modelo) ? opt : comPensamentoControlado(opt, modelo, tarefa);
+    let res = await fetch(url, optUsado);
+    if (res.status === 400 && optUsado !== opt && /thinking/i.test(await res.clone().text().catch(() => ''))) {
+      pensamentoRecusado.add(modelo);
+      optUsado = opt;
+      res = await fetch(url, opt);
+    }
     const nova = !res.ok && (await trocarModeloSeDescontinuado(url, res));
-    if (nova) res = await fetch(nova, opt);
-    if (res.ok) saudeIA.ok++;
-    else {
+    if (nova) {
+      url = nova;
+      modelo = modeloDe(nova);
+      optUsado = comPensamentoControlado(opt, modelo, tarefa);
+      res = await fetch(nova, optUsado);
+      if (res.status === 400 && optUsado !== opt) { pensamentoRecusado.add(modelo); res = await fetch(nova, opt); }
+    }
+    if (res.ok) {
+      saudeIA.ok++;
+      res.clone().json().then((j) => registrarUso(tarefa, modelo, j?.usageMetadata)).catch(() => {});
+    } else {
       saudeIA.erros++;
       if (res.status === 429) saudeIA.limite++;
       if (res.status === 402) { saudeIA.semCredito = new Date(); avisarSemCredito(); }
@@ -156,8 +225,11 @@ export async function analisar({ chat, historico, novas, interno, conhecimento =
   if (fatos.length) {
     partes.push(`\nBASE DE CONHECIMENTO DO CONDOMÍNIO (aprendida das conversas):\n${fatos.map((f) => `- ${f.fato}`).join('\n')}`);
   }
-  if (docs.length) {
-    let restante = 150000;
+  // Regimento/convenção só entram quando a conversa toca em regra (são o maior pedaço da entrada)
+  const sobreRegra = /(regiment|conven[cç][aã]o|regra|norma|pode|proib|permit|multa|advert[eê]ncia|hor[aá]rio|sil[eê]ncio|barulho|obra|reforma|mudan[cç]a|animal|pet|cachorro|piscina|sal[aã]o|churrasq|academia|vaga|garagem|estacion|assembleia|quorum|qu[oó]rum|taxa|rateio|fundo|artigo|art\.)/i
+    .test(novas.map((m) => m.text).join(' '));
+  if (docs.length && sobreRegra) {
+    let restante = 60000;
     const blocos = [];
     for (const d of docs) {
       if (restante <= 0) break;
@@ -183,7 +255,7 @@ export async function analisar({ chat, historico, novas, interno, conhecimento =
   };
 
   for (let tentativa = 1; tentativa <= 3; tentativa++) {
-    const res = await chamarGemini(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const res = await chamarGemini(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, 'Sugestões (análise das mensagens)');
     if (res.status === 429 || res.status >= 500) {
       await new Promise((r) => setTimeout(r, 2000 * tentativa));
       continue;
@@ -208,7 +280,7 @@ export async function transcrever(base64, mimetype) {
     generationConfig: { temperature: 0 },
   };
   for (let tentativa = 1; tentativa <= 3; tentativa++) {
-    const res = await chamarGemini(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const res = await chamarGemini(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, 'Transcrição de áudios');
     if (res.status === 429 || res.status >= 500) { await new Promise((r) => setTimeout(r, 2000 * tentativa)); continue; }
     if (!res.ok) throw new Error(`Gemini transcrição ${res.status}: ${(await res.text()).slice(0, 200)}`);
     const data = await res.json();
@@ -218,7 +290,7 @@ export async function transcrever(base64, mimetype) {
 }
 
 // Chamada genérica que devolve JSON (usada pelo aprendizado)
-export async function gerarJSON(sistema, texto, { leve = false } = {}) {
+export async function gerarJSON(sistema, texto, { leve = false, tarefa = 'Outros' } = {}) {
   const modelo = leve ? config.geminiModelLeve : config.geminiModel;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${config.geminiKey}`;
   const body = {
@@ -227,7 +299,7 @@ export async function gerarJSON(sistema, texto, { leve = false } = {}) {
     generationConfig: { temperature: 0.2, responseMimeType: 'application/json', maxOutputTokens: 16384 },
   };
   for (let tentativa = 1; tentativa <= 3; tentativa++) {
-    const res = await chamarGemini(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const res = await chamarGemini(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, tarefa);
     if (res.status === 429 || res.status >= 500) { await new Promise((r) => setTimeout(r, 3000 * tentativa)); continue; }
     if (!res.ok) throw new Error(`Gemini ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const data = await res.json();
@@ -247,7 +319,7 @@ function lerJSON(t) {
 }
 
 // Resposta em texto livre (conversa): não depende de JSON e aproveita a resposta mesmo se cortada no fim
-export async function gerarTexto(sistema, texto, { maxTokens = 8192 } = {}) {
+export async function gerarTexto(sistema, texto, { maxTokens = 8192, tarefa = 'Conversa no grupo de sugestões' } = {}) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.geminiModel}:generateContent?key=${config.geminiKey}`;
   const body = {
     systemInstruction: { parts: [{ text: sistema }] },
@@ -255,7 +327,7 @@ export async function gerarTexto(sistema, texto, { maxTokens = 8192 } = {}) {
     generationConfig: { temperature: 0.3, maxOutputTokens: maxTokens },
   };
   for (let tentativa = 1; tentativa <= 3; tentativa++) {
-    const res = await chamarGemini(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const res = await chamarGemini(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, tarefa);
     if (res.status === 429 || res.status >= 500) { await new Promise((r) => setTimeout(r, 4000 * tentativa)); continue; }
     if (!res.ok) throw new Error(`Gemini ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const data = await res.json();
@@ -278,7 +350,7 @@ export async function lerDocumento(base64, mimetype) {
     generationConfig: { temperature: 0, maxOutputTokens: 65000 },
   };
   for (let tentativa = 1; tentativa <= 3; tentativa++) {
-    const res = await chamarGemini(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const res = await chamarGemini(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, 'Leitura de documentos');
     if (res.status === 429 || res.status >= 500) { await new Promise((r) => setTimeout(r, 3000 * tentativa)); continue; }
     if (!res.ok) throw new Error(`Gemini documento ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const data = await res.json();

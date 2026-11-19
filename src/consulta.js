@@ -35,7 +35,7 @@ export async function perguntar(condo, pergunta, dias = 30) {
     `BASE DE CONHECIMENTO:\n${fatos.map((f) => `- ${f.fato}`).join('\n') || '(vazia)'}\n\n` +
     (docs.length ? `DOCUMENTOS:\n${docs.map((d) => `=== ${d.titulo} ===\n${d.texto.slice(0, 60000)}`).join('\n\n')}\n\n` : '') +
     `CONVERSAS DOS ÚLTIMOS ${dias} DIAS (${msgs.length} mensagens):\n${linhas.join('\n') || '(nenhuma)'}`;
-  const r = await gerarJSON(INSTR, entrada);
+  const r = await gerarJSON(INSTR, entrada, { tarefa: 'Perguntas (!perguntar)' });
   return { resposta: r?.resposta || 'Não consegui montar a resposta.', mensagens: msgs.length };
 }
 

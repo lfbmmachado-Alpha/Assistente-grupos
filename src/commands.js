@@ -9,7 +9,7 @@ import {
 } from './visitas.js';
 import { getVistoriadores } from './util.js';
 import { perguntar, limparConversa } from './consulta.js';
-import { saudeIA } from './gemini.js';
+import { saudeIA, usoHoje, custoEstimado } from './gemini.js';
 import { perguntarNaoIdentificados, listarVinculos, corrigirVinculos, modelos } from './identificar.js';
 import { revisarTudo, contarAssuntos } from './pendencias.js';
 import { iniciarEstudo, importarHistorico, aprenderTudo, listarEstudos, liberar, alterarDias, resumoCondo } from './estudo.js';
@@ -59,6 +59,7 @@ Citando um condomínio, ela foca nele — ex.: _como está o clima no Floresta?_
 !vistorias Nome — visitas de um condomínio
 !vistorias exportar [mm/aaaa] — planilha Excel
 !planilha — link para a planilha Google com todas as idas ([novo] troca o link)
+!custos [ontem] — consumo do Gemini por tarefa (tokens e estimativa em US$)
 !vistorias reler — relê as mensagens da semana (visita que não apareceu)
 !vistorias diagnostico Nome — mostra por que um condomínio está sem vistoria
 !vistorias sem grupo — condomínios do quadro sem grupo da IA e grupos fora do quadro
@@ -796,6 +797,30 @@ export async function handleCommand(msg, suggestionGroup) {
       const dom = process.env.RAILWAY_PUBLIC_DOMAIN || 'assistente-grupos-production-f2a1.up.railway.app';
       await reply(`📊 *Planilha Google de idas*\n\nCole este link na 1ª linha do script da planilha (URL_IDAS):\n\nhttps://${dom}/api/idas/${tok}\n\n` +
         `Não compartilhe o link: quem tiver acesso vê todas as idas. Para trocar (o antigo para de funcionar): *!planilha novo*`);
+      return true;
+    }
+    case 'custos':
+    case 'custo':
+    case 'consumo': {
+      // Consumo do Gemini por tarefa (tokens contados pela própria resposta do Google)
+      const ontem = normalize(args[0] || '') === 'ontem';
+      const dia = new Date(Date.now() - 3 * 3600 * 1000 - (ontem ? 86400000 : 0)).toISOString().slice(0, 10);
+      let tarefas = {};
+      if (!ontem && usoHoje.dia === dia) tarefas = usoHoje.tarefas;
+      else { try { tarefas = JSON.parse((await getSetting(`uso_${dia}`)) || '{}'); } catch {} }
+      const linhas = Object.entries(tarefas).map(([k, t]) => {
+        const [tarefa, modelo] = k.split('|');
+        return { tarefa, modelo, ...t, tokens: t.entrada + t.saida + t.pensamento, us: custoEstimado(modelo, t) };
+      }).sort((a, b) => (b.us ?? 0) - (a.us ?? 0) || b.tokens - a.tokens);
+      if (!linhas.length) { await reply(`📊 Sem consumo registrado em ${dia.split('-').reverse().join('/')}. (A contagem começou nesta versão.)`); return true; }
+      const totTok = linhas.reduce((s, l) => s + l.tokens, 0);
+      const totUs = linhas.reduce((s, l) => s + (l.us || 0), 0);
+      const mil = (n) => n >= 1e6 ? `${(n / 1e6).toFixed(1)} mi` : `${Math.round(n / 1000)} mil`;
+      await reply(`📊 *Consumo do Gemini ${ontem ? 'ontem' : 'hoje'}* (${dia.split('-').reverse().join('/')})\n` +
+        `${mil(totTok)} tokens${totUs ? ` · ≈ US$ ${totUs.toFixed(2)}` : ''}\n\n` +
+        linhas.map((l) => `• *${l.tarefa}* — ${l.chamadas} chamadas · ${mil(l.tokens)} tokens (${Math.round((l.tokens / totTok) * 100)}%)` +
+          `${l.us != null ? ` · ≈ US$ ${l.us.toFixed(2)}` : ''}\n   _${l.modelo}: entrada ${mil(l.entrada)}, resposta ${mil(l.saida)}${l.pensamento ? `, pensamento ${mil(l.pensamento)}` : ''}_`).join('\n') +
+        `\n\n_Estimativa pela tabela de preços do Google; o valor oficial está em aistudio.google.com → Billing._`);
       return true;
     }
     case 'status': {

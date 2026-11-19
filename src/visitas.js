@@ -351,7 +351,7 @@ async function processarVisitaAgora(chat, condoKey, msg) {
     `Autor: ${msg.authorName || vistoriador}${conhecido ? ` (funcionário da Alpha: ${vistoriador})` : ' (não identificado)'}\nCondomínio: ${chat.condo_name || condoKey}\nGrupo: ${chat.name || ''}\n` +
     `Horário: ${fmt(ts, { weekday: 'long', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}\n` +
     `Visita aberta hoje: ${aberta ? `sim, entrada às ${aberta.entrada ? hora(aberta.entrada) : '?'}` : 'não'}\n` +
-    `Mensagem: ${msg.text.slice(0, 1500)}`, { leve: true });
+    `Mensagem: ${msg.text.slice(0, 1500)}`, { leve: true, tarefa: 'Vistorias (mensagens da equipe)' });
   let evento = r?.evento || 'nenhum';
   // trava: texto sem sinal de presença no local não vira ida (ex.: "Bom dia, amanhã passo aí", aviso, cobrança)
   if (evento !== 'nenhum' && !PRESENCA.test(msg.text)) {
@@ -851,7 +851,7 @@ export async function verificarSemana(offset = 0, { aoProgresso } = {}) {
         msgs.map((m) => {
           const eq = m.from_me || /alpha\s+(administradora|condom[ií]nios)/i.test(m.text || '');
           return `[${fmt(m.ts, { day: '2-digit', month: '2-digit' })} ${hora(m.ts)}] (${m.kind}) ${eq ? `EQUIPE ALPHA (${m.author_name || ''})` : m.author_name || 'Participante'}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 300)}`;
-        }).join('\n'), { leve: true });
+        }).join('\n'), { leve: true, tarefa: 'Vistorias (verificação geral)' });
       for (const v of r?.visitas || []) {
         if (!v?.data || !v?.entrada) continue;
         // trava: precisa de foto/vídeo ou mensagem com sinal de presença naquele dia

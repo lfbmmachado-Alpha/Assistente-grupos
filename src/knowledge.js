@@ -175,7 +175,7 @@ export async function aprender({ forcar = false, condos: apenas = null } = {}) {
         (fatos.length ? fatos.map((f) => `#${f.id}: ${f.fato}`).join('\n') : '(vazia)') +
         `\n\nCONVERSAS NOVAS:\n${linhas.join('\n')}`;
 
-      const r = await gerarJSON(INSTRUCOES_EXTRACAO, entrada);
+      const r = await gerarJSON(INSTRUCOES_EXTRACAO, entrada, { tarefa: 'Aprendizado da base (a cada 3h)' });
       const ids = new Set(fatos.map((f) => f.id));
       for (const f of r?.novos || []) {
         if (f && String(f).trim()) { await adicionarFato(c.condo_key, String(f).trim(), 'conversas'); resumo.novos++; }

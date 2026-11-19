@@ -62,7 +62,7 @@ export async function revisarChat(chatJid) {
       return `[${fmt(m.ts)}] ${equipe ? `EQUIPE ALPHA (${m.author_name || ''})` : m.author_name || 'Participante'}: ${String(m.text).replace(/\s+/g, ' ').slice(0, 400)}`;
     }).join('\n')}`;
 
-  const r = await gerarJSON(INSTR, entrada, { leve: true });
+  const r = await gerarJSON(INSTR, entrada, { leve: true, tarefa: 'Revisão de pendências' });
   const resolvidos = new Set((r?.resolvidas || []).map(String));
   let n = 0;
   for (const g of lista) {
