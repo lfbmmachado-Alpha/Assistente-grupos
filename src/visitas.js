@@ -36,10 +36,12 @@ export async function initVisitas() {
     await setSetting('ignored_condos', JSON.stringify(ign));
     await setSetting('sairam_aplicado', new Date().toISOString());
   }
-  // Correção (a cada inicialização, idempotente): semana sem ordinária mas com alguma ida → a primeira ida da semana
-  // passa a contar como a visita da semana (regra: qualquer ida conta)
+  await ajustarOrdinarias();
+}
 
-
+// Semana sem ordinária mas com alguma ida → a primeira ida da semana passa a contar como a visita da semana
+// (regra: qualquer ida conta). Idempotente: roda na inicialização e depois de apagar idas.
+export async function ajustarOrdinarias() {
   await q(`
     WITH cand AS (
       SELECT v.id, v.condo_key, date_trunc('week', COALESCE(v.entrada, v.saida, v.ultima_atividade) AT TIME ZONE 'America/Sao_Paulo') AS sem,
@@ -154,7 +156,8 @@ Classifique a mensagem do funcionário:
 TODA IDA CONTA, qualquer que seja o motivo: vistoria, entrega ou retirada de material, acompanhar técnico ou obra, atender chamado,
 reunião, assembleia, leitura de gás, buscar chave/documento.
 - "nenhum": visita FUTURA ou A CAMINHO ("passo aí amanhã às 10h", "vou levar o material", "estou a caminho", "indo para o condomínio", "chego em 10 minutos" — quem diz que está indo AINDA NÃO chegou e pode não ir), resposta ou comunicado feito à distância,
-  cobrança, aviso geral — ou seja, quando NÃO dá para concluir que a pessoa está ou esteve no condomínio naquele momento.
+  cobrança, aviso geral, relato de problema ou providência SEM dizer que está no local ("a fechadura está com defeito, já acionei o chaveiro",
+  "vamos verificar a porta da garagem", "o técnico vai passar") — ou seja, quando NÃO dá para concluir que a pessoa está ou esteve no condomínio naquele momento.
 tipo: "ordinaria" se for vistoria de rotina ou mencionar vistoria; "extraordinaria" para qualquer outro motivo (entrega de material,
 técnico, obra, chamado, assembleia, reunião…); "indefinido" se não der para saber.
 motivo: poucas palavras dizendo para que foi (ex.: "entrega de material", "acompanhar técnico do portão", "vistoria").
@@ -558,7 +561,9 @@ export function linhaVisita(v, i) {
     `${v.motivo ? ` (${v.motivo})` : ''}${v.origem === 'manual' ? ' ✍️' : v.origem === 'verificacao' ? ' 🔎' : ''}`;
 }
 export async function removerVisita(id) {
-  return (await q('DELETE FROM visitas WHERE id = $1', [id])).rowCount;
+  const n = (await q('DELETE FROM visitas WHERE id = $1', [id])).rowCount;
+  await ajustarOrdinarias();
+  return n;
 }
 export async function lancarManual({ condo_key, condo_nome, vistoriador, tipo, motivo, entrada, saida }) {
   await q(
@@ -717,7 +722,8 @@ dos grupos de WhatsApp de UM condomínio e diz se algum FUNCIONÁRIO DA ALPHA es
 Conta como presença QUALQUER ida, por qualquer motivo: aviso de chegada/vistoria, fotos ou relatos feitos no local
 ("verifiquei a bomba", "estou aqui com o técnico"), entrega ou retirada de material ("deixei o material na portaria",
 "levei as lâmpadas"), acompanhar serviço ou obra, atender chamado, reunião/assembleia, saída ("finalizado", "saindo").
-NÃO conta: visita futura, agendada ou "a caminho" ("passo amanhã", "vou levar o material", "estou a caminho", "indo aí") sem confirmação de que chegou, resposta à distância, morador, síndico morador, prestador terceirizado.
+NÃO conta: visita futura, agendada ou "a caminho" ("passo amanhã", "vou levar o material", "estou a caminho", "indo aí") sem confirmação de que chegou, resposta à distância, relato de problema ou providência sem dizer que está no local ("a fechadura está com defeito", "vamos verificar a porta"), morador, síndico morador, prestador terceirizado.
+Na dúvida, NÃO registre: é melhor faltar uma ida (o Luiz lança à mão) do que inventar uma que não houve.
 Funcionários da Alpha costumam assinar "Alpha Administradora" ou estar marcados como EQUIPE ALPHA, mas podem não estar.
 Fotos ou vídeos ([imagem], [vídeo]) mandados por funcionário da Alpha durante o dia contam como presença no local.
 Use SÓ as mensagens do próprio grupo deste condomínio: não conte ida a OUTRO condomínio citado na conversa (nomes parecidos, ex.: "Beatriz" x "Paula Beatriz").
@@ -1000,6 +1006,7 @@ export async function apagarVisitas(nome, data) {
     if (!desc.includes(k)) desc.push(k);
   }
   await setSetting('visitas_descartadas', JSON.stringify(desc.slice(-500)));
+  await ajustarOrdinarias(); // se apagou a ordinária, a próxima ida da semana passa a contar
   return `🗑️ *${rotulo}*: apaguei ${vis.length} ida(s):\n${vis.map((v) => `• ${quando(v)} ${v.vistoriador}${v.motivo ? ` _(${v.motivo})_` : ''}`).join('\n')}\n\n` +
     `A verificação não registra de novo nesse dia. O condomínio volta para pendente se não houver outra ida na semana.`;
 }
