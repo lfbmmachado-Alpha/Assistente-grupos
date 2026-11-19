@@ -4,6 +4,7 @@ import { initDb, purgeOld } from './db.js';
 import { handleWebhook } from './handler.js';
 import { initKnowledge, aprender } from './knowledge.js';
 import { initVisitas, alertaSemanal, rodarEnvios, conferenciaAutomatica } from './visitas.js';
+import { initLeituras, rodarAvisosLeituras } from './leituras.js';
 import { initEstudo, verificarEstudos } from './estudo.js';
 import { revisarTudo } from './pendencias.js';
 
@@ -34,6 +35,7 @@ app.post(['/webhook/:token', '/webhook/:token/:event'], (req, res) => {
 await initDb();
 await initKnowledge();
 await initVisitas();
+await initLeituras();
 await initEstudo();
 
 // LGPD: apaga mensagens mais antigas que RETENTION_DAYS, uma vez por dia
@@ -49,6 +51,8 @@ setInterval(rodarAprendizado, 3 * 3600 * 1000);
 setInterval(() => alertaSemanal().catch((e) => console.error('[visita]', e.message)), 60 * 1000);
 // Envios programados (ex.: relatório do Kesse no grupo dele às 19h)
 setInterval(() => rodarEnvios().catch((e) => console.error('[envio]', e.message)), 60 * 1000);
+// leituras: aviso da semana (segunda 07:30) e resumo diário (17:30) nos grupos dos líderes
+setInterval(() => rodarAvisosLeituras().catch((e) => console.error('[leituras]', e.message)), 60 * 1000);
 // Conferência automática das vistorias (18h40 todo dia; segunda 06h a semana anterior)
 setInterval(() => conferenciaAutomatica().catch((e) => console.error('[conferência]', e.message)), 5 * 60 * 1000);
 

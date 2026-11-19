@@ -212,3 +212,15 @@ Variáveis opcionais: `VISITAS_ALERTA_DIA` (5 = sexta) e `VISITAS_ALERTA_HORA` (
 | Nada é notificado | A IA está nos grupos? O condomínio está no `!teste`? A instância está conectada? |
 | Condomínio aparece duas vezes | Grupos com nomes diferentes (ex.: "Ametista" e "Ed Ametista Torre 1"). Use `!outros`/`!vincular` |
 | Erro "Gemini 400/403" nos logs | Chave do Gemini ou nome do modelo (`GEMINI_MODEL`) |
+
+## Leituras mensais
+
+Controle das leituras (água/gás) por condomínio. A próxima leitura é o mesmo dia da leitura do mês anterior e
+entra na semana (seg–dom) em que cai. Cadastro e histórico carregados da planilha LEITURAS_2026.
+
+- `!leituras controle = Nome do grupo` — grupo onde a equipe manda a lista de leituras feitas (a IA só lê)
+- `!leituras grupo Janaina = COND. JANAINA` — onde avisar cada líder (segunda 07:30 a semana; seg–sáb 17:30 feitas e a fazer)
+- `!leituras`, `!leituras Janaina`, `!leituras grupos`, `!leituras enviar [semana|dia] [Líder]`
+- `!leituras importar` + lista colada · `!leitura feita Nome dd/mm (Quem)`
+- `!leituras apelido nome da lista = nome do controle` · `!leituras incluir Nome = Líder` · `!leituras remover Nome`
+- `!leituras horario semana 07:30` · `!leituras horario dia 17:30`

@@ -15,6 +15,7 @@ import { situacaoEstudo } from './estudo.js';
 import { tratarResposta, perguntarNaoIdentificados, respostaVinculos } from './identificar.js';
 import { conversar } from './consulta.js';
 import { aprenderEquipePelaAssinatura, revisarEmBreve } from './pendencias.js';
+import { registrarLista } from './leituras.js';
 
 // ---------- entrada do webhook ----------
 export async function handleWebhook(body) {
@@ -91,6 +92,15 @@ async function processar(d) {
 
   const chat = await garantirChat(msg);
   if (!chat) return;
+
+  // Grupo de controle de leituras: lê a lista de leituras feitas (não é condomínio, não gera sugestão)
+  if (msg.chatJid === (await getSetting('leituras_grupo_controle'))) {
+    if (!msg.fromMe) {
+      const r = await registrarLista(msg.text).catch((e) => { console.error('[leituras]', e.message); return null; });
+      if (r) console.log(`[leituras] lista recebida: ${r.linhas} linha(s), ${r.novas} leitura(s) nova(s)`);
+    }
+    return;
+  }
 
   // Condomínio da conversa
   let condoKey = chat.condo_key;

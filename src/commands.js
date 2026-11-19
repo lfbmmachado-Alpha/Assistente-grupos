@@ -60,6 +60,7 @@ Citando um condomínio, ela foca nele — ex.: _como está o clima no Floresta?_
 !vistorias exportar [mm/aaaa] — planilha Excel
 !planilha — link para a planilha Google com todas as idas ([novo] troca o link)
 !custos [ontem] — consumo do Gemini por tarefa (tokens e estimativa em US$)
+!leituras — controle das leituras mensais (!leituras ajuda para os comandos)
 !vistorias reler — relê as mensagens da semana (visita que não apareceu)
 !vistorias diagnostico Nome — mostra por que um condomínio está sem vistoria
 !vistorias sem grupo — condomínios do quadro sem grupo da IA e grupos fora do quadro
@@ -616,6 +617,115 @@ export async function handleCommand(msg, suggestionGroup) {
       const e = { jid: g.jid, nome: g.name, vistoriador: vist, hora, dias: semFds };
       await salvarEnvio(e);
       await reply(`✅ Programado: relatório de *${vist}* no grupo *${g.name}* todo dia${semFds ? ' (sem fim de semana)' : ''} às *${hora}*.\nPara ver agora como fica: !envio testar ${(await listarEnvios()).length}`);
+      return true;
+    }
+
+    case 'leitura':
+    case 'leituras': {
+      const L = await import('./leituras.js');
+      const sub = normalize(args[0] || '');
+      const primeira = texto.split('\n')[0];
+      const resto1 = primeira.replace(/^!\S+\s*\S*\s*/, '').trim(); // depois do subcomando
+      const acharGrupo = async (nome) => {
+        const grupos = (await pool.query(`SELECT jid, name FROM chats WHERE jid LIKE '%@g.us'`)).rows;
+        const alvo = normalize(nome);
+        return grupos.find((x) => normalize(x.name || '') === alvo) || grupos.filter((x) => normalize(x.name || '').includes(alvo))[0];
+      };
+      const interno = (jid) => pool.query(`UPDATE chats SET kind = 'interno', condo_key = NULL, condo_name = NULL, manual = TRUE WHERE jid = $1`, [jid]);
+      const AJUDA = '📏 *Leituras — comandos*\n' +
+        '!leituras — situação da semana (todos os líderes)\n!leituras Janaina — só de um líder\n' +
+        '!leituras controle = Nome do grupo — grupo onde a equipe manda a lista de leituras feitas\n' +
+        '!leituras grupo Janaina = COND. JANAINA — onde avisar cada líder\n!leituras grupos — ver configuração\n' +
+        '!leituras enviar [semana|dia] [Líder] — manda os avisos agora\n!leituras importar + lista colada abaixo\n' +
+        '!leitura feita Nome dd/mm (Quem)\n!leituras apelido nome da lista = nome do controle\n' +
+        '!leituras incluir Nome = Líder · !leituras remover Nome\n!leituras horario semana 07:30 · !leituras horario dia 17:30';
+
+      if (cmd === 'leitura' && sub === 'feita') {
+        const m = primeira.match(/feita\s+(.+?)\s+(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)\s*(?:\((.+)\))?\s*$/i);
+        if (!m) { await reply('Use: !leitura feita Antares 19/11 (Carlos)'); return true; }
+        const c = await L.leituraManual(m[1], m[2], m[3]);
+        await reply(c ? `✅ Leitura registrada: *${c.nome}* em ${m[2]}${m[3] ? ` (${m[3]})` : ''}` : `Não achei "${m[1]}" no controle de leituras.`);
+        return true;
+      }
+      if (sub === 'ajuda' || sub === 'comandos') { await reply(AJUDA); return true; }
+      if (sub === 'controle') {
+        const nome = primeira.split('=')[1]?.trim();
+        if (!nome) { await reply('Use: !leituras controle = Nome do grupo de controle de leituras'); return true; }
+        const g = await acharGrupo(nome);
+        if (!g) { await reply(`Não achei o grupo "${nome}". Adicione a IA no grupo, mande !sincronizar e tente de novo.`); return true; }
+        await interno(g.jid);
+        await setSetting('leituras_grupo_controle', g.jid);
+        await setSetting('leituras_grupo_controle_nome', g.name);
+        await reply(`✅ *${g.name}* é o grupo de controle de leituras. A IA só lê as listas que a equipe manda ali (não escreve nada no grupo).\n\nPara já carregar a lista deste mês, cole-a aqui: *!leituras importar* na 1ª linha e a lista abaixo.`);
+        return true;
+      }
+      if (sub === 'grupo') {
+        if (normalize(args[1] || '') === 'remover') {
+          await L.removerGrupoLider(args.slice(2).join(' '));
+          await reply(`➖ Avisos de leitura de ${args.slice(2).join(' ')} desligados.`);
+          return true;
+        }
+        const [lider, nome] = resto1.split('=').map((x) => (x || '').trim());
+        if (!lider || !nome) { await reply('Use: !leituras grupo Janaina = COND. JANAINA'); return true; }
+        const ls = await L.lideres();
+        const lid = ls.find((x) => normalize(x) === normalize(lider));
+        if (!lid) { await reply(`"${lider}" não é líder no controle. Líderes: ${ls.join(', ')}`); return true; }
+        const g = await acharGrupo(nome);
+        if (!g) { await reply(`Não achei o grupo "${nome}". Adicione a IA no grupo, mande !sincronizar e tente de novo.`); return true; }
+        await interno(g.jid);
+        await L.definirGrupoLider(lid, g);
+        await reply(`✅ Leituras de *${lid}* serão avisadas em *${g.name}*: segunda 07:30 (semana) e de seg a sáb 17:30 (feitas e a fazer).\nPara ver como fica: *!leituras enviar semana ${lid}*`);
+        return true;
+      }
+      if (sub === 'grupos') {
+        const g = await L.listarGrupos();
+        const ls = await L.lideres();
+        await reply(`📏 *Leituras — configuração*\nGrupo de controle: ${g.controle || '— (use !leituras controle = Nome)'}\n\n` +
+          ls.map((l) => { const x = g.lideres.find((y) => normalize(y.lider) === normalize(l)); return `• ${l} → ${x ? x.nome : '— (use !leituras grupo ' + l + ' = Nome do grupo)'}`; }).join('\n'));
+        return true;
+      }
+      if (sub === 'enviar' || sub === 'testar') {
+        const tipo = normalize(args[1] || '') === 'semana' ? 'semana' : 'dia';
+        const so = args.slice(normalize(args[1] || '') === 'semana' || normalize(args[1] || '') === 'dia' ? 2 : 1).join(' ') || null;
+        const n = await L.enviarAvisos(tipo, { so });
+        await reply(n ? `📤 Aviso de leituras (${tipo === 'semana' ? 'da semana' : 'do dia'}) enviado para ${n} grupo(s).` : 'Nenhum grupo de líder configurado ainda: !leituras grupo Janaina = COND. JANAINA');
+        return true;
+      }
+      if (sub === 'importar' || sub === 'lista') {
+        const corpo = texto.split('\n').slice(1).join('\n');
+        if (!corpo.trim()) { await reply('Mande na mesma mensagem: *!leituras importar* na 1ª linha e a lista abaixo, como a equipe manda no grupo de controle.'); return true; }
+        const r = await L.registrarLista(corpo, { origem: 'lista' });
+        await reply(`📏 Lista lida: ${r.linhas} linha(s) · *${r.novas} leitura(s) nova(s)* registrada(s)${r.naoAchei.length ? ` · ${r.naoAchei.length} não reconhecida(s) (mandei acima)` : ''}.`);
+        return true;
+      }
+      if (sub === 'apelido') {
+        const [de, para] = resto1.split('=').map((x) => (x || '').trim());
+        const c = de && para ? await L.salvarApelido(de, para) : null;
+        await reply(c ? `✅ "${de}" agora é *${c.nome}* nas listas de leitura.` : 'Use: !leituras apelido nome da lista = nome do controle');
+        return true;
+      }
+      if (sub === 'incluir') {
+        const [nome, lider] = resto1.split('=').map((x) => (x || '').trim());
+        if (!nome || !lider) { await reply('Use: !leituras incluir Nome do condomínio = Líder'); return true; }
+        await L.incluirCondominio(nome, lider);
+        await reply(`➕ *${nome}* incluído no controle de leituras (líder: ${lider}). Para calcular a data, registre a última leitura: !leitura feita ${nome} dd/mm`);
+        return true;
+      }
+      if (sub === 'remover' || sub === 'tirar') {
+        const c = await L.removerCondominio(resto1);
+        await reply(c ? `➖ *${c.nome}* saiu do controle de leituras.` : `Não achei "${resto1}" no controle.`);
+        return true;
+      }
+      if (sub === 'horario') {
+        const qual = normalize(args[1] || '');
+        const h = (args[2] || '').match(/^(\d{1,2})[:h]?(\d{2})?$/);
+        if (!['semana', 'dia'].includes(qual) || !h) { await reply('Use: !leituras horario semana 07:30  ou  !leituras horario dia 17:30'); return true; }
+        const hora = `${h[1].padStart(2, '0')}:${h[2] || '00'}`;
+        await setSetting(qual === 'semana' ? 'leituras_hora_semana' : 'leituras_hora_dia', hora);
+        await reply(`✅ ${qual === 'semana' ? 'Aviso da semana (segunda)' : 'Resumo diário (seg a sáb)'} às *${hora}*.`);
+        return true;
+      }
+      for (const m of await L.relatorioLeituras(resto)) await reply(m);
       return true;
     }
 
