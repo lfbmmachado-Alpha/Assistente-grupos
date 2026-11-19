@@ -19,7 +19,8 @@ app.get('/api/idas/:token', async (req, res) => {
     const tok = await getSetting('planilha_token');
     if (!tok || req.params.token !== tok) return res.sendStatus(401);
     const { planilhaIdas } = await import('./visitas.js');
-    res.json({ atualizado: new Date().toISOString(), idas: await planilhaIdas() });
+    const { planilhaLeituras } = await import('./leituras.js');
+    res.json({ atualizado: new Date().toISOString(), idas: await planilhaIdas(), leituras: await planilhaLeituras().catch(() => null) });
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 

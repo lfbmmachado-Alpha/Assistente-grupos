@@ -271,14 +271,33 @@ export async function relatorioLeituras(filtro = '') {
 
 // ---------- grupos e envios ----------
 // { "<líder normalizado>": { jid, nome } }  ·  grupo de controle em leituras_grupo
-async function gruposLider() { try { return JSON.parse(await getSetting('leituras_grupos', '{}')); } catch { return {}; } }
+async function gruposManuais() { try { return JSON.parse(await getSetting('leituras_grupos', '{}')); } catch { return {}; } }
+// Grupo de cada responsável: o ligado à mão (!leituras grupo) ou, sozinho, o grupo chamado "COND. <NOME>"
+// (COND. LEANDRO → Leandro, COND. CARLOS → Carlos…). O grupo achado vira interno (não é condomínio).
+async function gruposLider() {
+  const m = await gruposManuais();
+  const nomes = await lideres();
+  const chats = (await q(`SELECT jid, name, kind FROM chats WHERE jid LIKE '%@g.us'`)).rows;
+  for (const p of nomes) {
+    const k = normalize(p);
+    if (m[k]) continue;
+    const g = chats.find((c) => new RegExp(`^cond(ominios?)?\\s+${k}$`).test(normalize(c.name || '')));
+    if (!g) continue;
+    m[k] = { jid: g.jid, nome: g.name, lider: p, auto: true };
+    if (g.kind !== 'interno') {
+      await q(`UPDATE chats SET kind = 'interno', condo_key = NULL, condo_name = NULL, manual = TRUE WHERE jid = $1`, [g.jid]);
+      console.log(`[leituras] grupo "${g.name}" ligado a ${p} (interno)`);
+    }
+  }
+  return m;
+}
 export async function definirGrupoLider(lider, g) {
-  const m = await gruposLider();
+  const m = await gruposManuais();
   m[normalize(lider)] = { jid: g.jid, nome: g.name, lider };
   await setSetting('leituras_grupos', JSON.stringify(m));
 }
 export async function removerGrupoLider(lider) {
-  const m = await gruposLider();
+  const m = await gruposManuais();
   delete m[normalize(lider)];
   await setSetting('leituras_grupos', JSON.stringify(m));
 }
@@ -343,4 +362,29 @@ export async function leituraManual(nome, data, quem) {
   if (!c) return null;
   await registrarLista(`${c.nome} (${quem || 'manual'}) ${data}`, { origem: 'manual', avisarFalhas: false });
   return c;
+}
+
+// ---------- planilha Google: aba Leituras (um mês por coluna, lado a lado; nada é apagado) ----------
+export async function planilhaLeituras() {
+  const s = await situacao();
+  const leit = (await q(`SELECT chave, data::text AS data, quem FROM leituras ORDER BY data`)).rows;
+  const meses = [...new Set(leit.map((l) => l.data.slice(0, 7)))].sort();
+  const porCondo = new Map();
+  for (const l of leit) {
+    const m = porCondo.get(l.chave) || {};
+    m[l.data.slice(0, 7)] = `${ddmm(l.data)}${l.quem ? ` (${l.quem})` : ''}`;
+    porCondo.set(l.chave, m);
+  }
+  const ESTADO = { feita: 'Feita na semana', semana: 'Nesta semana', atrasada: 'Atrasada', futura: 'Em dia', sem_historico: 'Sem histórico' };
+  const linhas = s.itens
+    .sort((a, b) => (a.responsavel || 'zz').localeCompare(b.responsavel || 'zz') || a.nome.localeCompare(b.nome))
+    .map((i) => ({
+      condominio: titulo(i.nome),
+      responsavel: i.responsavel || '',
+      ultima: i.feita ? ddmm(i.feita.data) : i.ultima ? ddmm(i.ultima) : '',
+      proxima: i.feita ? (i.feita.data ? ddmm(proximoMes(i.feita.data)) : '') : i.alvo ? `${diaSem(i.alvo)} ${ddmm(i.alvo)}` : '',
+      situacao: ESTADO[i.estado] || i.estado,
+      meses: meses.map((m) => (porCondo.get(i.chave) || {})[m] || ''),
+    }));
+  return { meses: meses.map((m) => `${m.slice(5, 7)}/${m.slice(0, 4)}`), linhas };
 }

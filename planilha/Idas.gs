@@ -27,6 +27,7 @@ function planilha() {
 const ABA = 'Idas';
 const ABA_RESUMO = 'Resumo';
 const ABA_ASSEMBLEIA = 'Assembleia';
+const ABA_LEITURAS = 'Leituras';
 const CAB = ['ID', 'Data', 'Dia', 'Semana (início)', 'Mês', 'Condomínio', 'Responsável (quadro)', 'Quem foi',
   'Tipo', 'Motivo / causa', 'Entrada', 'Saída', 'Saída estimada', 'Duração', 'Origem', 'Mensagem de entrada', 'Observação'];
 const LARG = [45, 85, 45, 95, 70, 190, 120, 100, 135, 230, 65, 65, 75, 70, 120, 260, 260];
@@ -64,7 +65,8 @@ function atualizarIdas() {
   if (URL_IDAS.indexOf('http') !== 0) throw new Error('Cole em URL_IDAS o link que o !planilha mandou.');
   const res = UrlFetchApp.fetch(URL_IDAS, { muteHttpExceptions: true });
   if (res.getResponseCode() !== 200) throw new Error('O servidor respondeu ' + res.getResponseCode() + '. Confira o link (!planilha).');
-  const idas = JSON.parse(res.getContentText()).idas || [];
+  const dados = JSON.parse(res.getContentText());
+  const idas = dados.idas || [];
 
   const ss = planilha();
   let sh = ss.getSheetByName(ABA);
@@ -108,6 +110,7 @@ function atualizarIdas() {
   const quando = Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'dd/MM/yyyy HH:mm');
   sh.getRange('A1').setNote('Atualizado em ' + quando);
 
+  if (dados.leituras) escreverLeituras(ss, dados.leituras);
   if (!ss.getSheetByName(ABA_RESUMO)) criarResumo(ss);
   if (!ss.getSheetByName(ABA_ASSEMBLEIA)) criarAssembleia(ss);
   ss.getSheetByName(ABA_ASSEMBLEIA).getRange('H2').setValue('Atualizado em ' + quando);
@@ -254,4 +257,42 @@ function paraPtBr(f) {
     out += !aspas && ch === ',' ? (chaves > 0 ? '\\' : ';') : ch;
   }
   return out;
+}
+
+// ---------------------------------------------------------------- aba Leituras
+// Um mês por coluna, lado a lado (o mais novo à direita). O histórico vem do sistema e nunca é apagado.
+function escreverLeituras(ss, L) {
+  let sh = ss.getSheetByName(ABA_LEITURAS);
+  const nova = !sh;
+  if (!sh) sh = ss.insertSheet(ABA_LEITURAS);
+  const fixas = ['Condomínio', 'Responsável', 'Última leitura', 'Próxima', 'Situação'];
+  const cab = fixas.concat(L.meses.map((m) => 'Leitura ' + m));
+  const linhas = L.linhas.map((r) => [r.condominio, r.responsavel, r.ultima, r.proxima, r.situacao].concat(r.meses));
+  const nc = cab.length;
+  if (sh.getFilter()) sh.getFilter().remove();
+  sh.clearContents();
+  sh.getRange(1, 1, Math.max(linhas.length + 1, 2), nc).setNumberFormat('@');
+  sh.getRange(1, 1, 1, nc).setValues([cab]).setFontWeight('bold').setBackground(AZUL).setFontColor('#ffffff')
+    .setHorizontalAlignment('center').setVerticalAlignment('middle').setWrap(true);
+  sh.setRowHeight(1, 36);
+  if (linhas.length) {
+    sh.getRange(2, 1, linhas.length, nc).setValues(linhas).setFontSize(10).setVerticalAlignment('middle');
+    sh.getRange(2, 1, linhas.length, 1).setFontWeight('bold');
+    sh.getRange(2, 3, linhas.length, nc - 2).setHorizontalAlignment('center');
+  }
+  sh.setFrozenRows(1);
+  sh.setFrozenColumns(2);
+  if (nova) { sh.setColumnWidth(1, 210); sh.setColumnWidth(2, 110); sh.setColumnWidth(3, 100); sh.setColumnWidth(4, 100); sh.setColumnWidth(5, 120); }
+  for (let c = 6; c <= nc; c++) sh.setColumnWidth(c, 115);
+  sh.getRange(1, 1, Math.max(linhas.length + 1, 2), nc).createFilter();
+  const sit = sh.getRange(2, 5, Math.max(linhas.length, 1), 1);
+  const ultimoMes = nc > 5 ? sh.getRange(2, nc, Math.max(linhas.length, 1), 1) : null;
+  const regras = [
+    SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('Atrasada').setBackground('#f4cccc').setFontColor('#990000').setBold(true).setRanges([sit]).build(),
+    SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('Nesta semana').setBackground('#fff2cc').setFontColor('#7f6000').setRanges([sit]).build(),
+    SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('Feita na semana').setBackground(VERDE).setFontColor('#2e6b1f').setRanges([sit]).build(),
+    SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=ISEVEN(ROW())').setBackground(CINZA).setRanges([sh.getRange(2, 1, Math.max(linhas.length, 1), nc)]).build(),
+  ];
+  if (ultimoMes) regras.unshift(SpreadsheetApp.newConditionalFormatRule().whenCellNotEmpty().setBackground(AZUL_CLARO).setRanges([ultimoMes]).build());
+  sh.setConditionalFormatRules(regras);
 }
