@@ -16,6 +16,14 @@
 
 const URL_IDAS = 'COLE_AQUI_O_LINK_DO_!planilha';
 
+// Só se o script for criado FORA da planilha (em script.google.com → Novo projeto):
+// cole aqui o ID da planilha (o trecho entre /d/ e /edit no endereço dela). Dentro da planilha, deixe vazio.
+const ID_PLANILHA = '';
+
+function planilha() {
+  return ID_PLANILHA ? SpreadsheetApp.openById(ID_PLANILHA) : SpreadsheetApp.getActive();
+}
+
 const ABA = 'Idas';
 const ABA_RESUMO = 'Resumo';
 const ABA_ASSEMBLEIA = 'Assembleia';
@@ -42,11 +50,11 @@ function instalarGatilho() {
     .forEach((t) => ScriptApp.deleteTrigger(t));
   ScriptApp.newTrigger('atualizarIdas').timeBased().everyMinutes(10).create();
   atualizarIdas();
-  SpreadsheetApp.getActive().toast('Atualização automática ligada (a cada 10 min).', 'Alpha');
+  try { planilha().toast('Atualização automática ligada (a cada 10 min).', 'Alpha'); } catch (e) {}
 }
 
 function refazerLayout() {
-  const ss = SpreadsheetApp.getActive();
+  const ss = planilha();
   [ABA_ASSEMBLEIA, ABA_RESUMO].forEach((n) => { const s = ss.getSheetByName(n); if (s) ss.deleteSheet(s); });
   atualizarIdas();
 }
@@ -58,7 +66,7 @@ function atualizarIdas() {
   if (res.getResponseCode() !== 200) throw new Error('O servidor respondeu ' + res.getResponseCode() + '. Confira o link (!planilha).');
   const idas = JSON.parse(res.getContentText()).idas || [];
 
-  const ss = SpreadsheetApp.getActive();
+  const ss = planilha();
   let sh = ss.getSheetByName(ABA);
   const nova = !sh;
   if (!sh) {
@@ -225,5 +233,5 @@ function criarAssembleia(ss) {
   SpreadsheetApp.flush();
   const primeiro = ss.getSheetByName(ABA_RESUMO).getRange('A5').getValue();
   if (primeiro) a.getRange('B4').setValue(primeiro);
-  a.activate();
+  try { a.activate(); } catch (e) {}
 }
