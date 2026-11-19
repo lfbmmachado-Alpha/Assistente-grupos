@@ -167,7 +167,7 @@ export async function situacao(ref = hojeBR()) {
     if (feitaSemana) estado = 'feita';
     else if (!alvo) estado = 'sem_historico';
     else if (alvo < ini) estado = 'atrasada';
-    else if (alvo <= fim) estado = alvo < ref ? 'atrasada' : 'semana';
+    else if (alvo <= fim) estado = 'semana'; // vale a semana inteira (seg–sex), não o dia
     else estado = 'futura';
     // quem faz a leitura deste condomínio: quem fez a desta semana, senão quem fez a última (lista do grupo de controle)
     const executor = (feitaSemana?.quem) || [...hist].reverse().find((l) => l.quem)?.quem || null;
@@ -178,27 +178,28 @@ export async function situacao(ref = hojeBR()) {
 
 // ---------- mensagens ----------
 function blocoLider(lider, itens, { ref, ini, fim }, tipo) {
+  // Na mensagem vale a SEMANA (segunda a sexta), não o dia: o cálculo continua pelo dia do mês passado.
   const meus = itens.filter((i) => normalize(i.responsavel || '') === normalize(lider));
+  const porNome = (a, b) => a.nome.localeCompare(b.nome);
   const feitas = meus.filter((i) => i.estado === 'feita').sort((a, b) => a.feita.data.localeCompare(b.feita.data));
-  const atras = meus.filter((i) => i.estado === 'atrasada').sort((a, b) => a.alvo.localeCompare(b.alvo));
-  const semana = meus.filter((i) => i.estado === 'semana').sort((a, b) => a.alvo.localeCompare(b.alvo));
+  const atras = meus.filter((i) => i.estado === 'atrasada').sort(porNome);
+  const semana = meus.filter((i) => i.estado === 'semana').sort(porNome);
   const total = feitas.length + atras.length + semana.length;
-  const lin = (i) => `• *${titulo(i.nome)}* — ${diaSem(i.alvo)} ${ddmm(i.alvo)} _(mês passado: ${ddmm(i.ultima)})_`;
+  const sexta = somaDias(ini, 4);
+  const periodo = `segunda ${ddmm(ini)} a sexta ${ddmm(sexta)}`;
+  const lin = (i) => `• *${titulo(i.nome)}*`;
   const partes = [];
   if (tipo === 'semana') {
-    partes.push(`📏 *Leituras da semana — ${lider}*\n${ddmm(ini)} a ${ddmm(fim)} · ${atras.length + semana.length} a fazer${feitas.length ? ` · ✅ ${feitas.length} já feita(s)` : ''}`);
-    if (atras.length) partes.push(`⚠️ *Atrasadas (${atras.length})*\n${atras.map(lin).join('\n')}`);
-    if (semana.length) partes.push(`📅 *Nesta semana (${semana.length})*\n${semana.map(lin).join('\n')}`);
+    partes.push(`📏 *Leituras da semana — ${lider}*\n${periodo} · ${atras.length + semana.length} a fazer${feitas.length ? ` · ✅ ${feitas.length} já feita(s)` : ''}`);
+    if (atras.length) partes.push(`⚠️ *Atrasadas, da semana passada (${atras.length})*\n${atras.map(lin).join('\n')}`);
+    if (semana.length) partes.push(`📅 *Para fazer nesta semana (${semana.length})*\n${semana.map(lin).join('\n')}`);
     if (!atras.length && !semana.length) partes.push('🎉 Nenhuma leitura prevista para esta semana.');
-    partes.push('_A data é o mesmo dia da leitura do mês passado. Ao fazer, mande no grupo de controle de leituras como de costume._');
+    partes.push('_Ao fazer, mande no grupo de controle de leituras como de costume._');
   } else {
-    partes.push(`📏 *Leituras — ${lider}* · ${diaSem(ref)} ${ddmm(ref)}\n✅ ${feitas.length} de ${total} da semana`);
-    if (feitas.length) partes.push(`✅ *Feitas (${feitas.length})*\n${feitas.map((i) => `• *${titulo(i.nome)}* ${diaSem(i.feita.data)} ${ddmm(i.feita.data)}${i.feita.quem ? ` · ${i.feita.quem}` : ''}`).join('\n')}`);
-    const hoje = semana.filter((i) => i.alvo === ref);
-    const depois = semana.filter((i) => i.alvo > ref);
-    if (atras.length) partes.push(`⚠️ *Atrasadas (${atras.length})*\n${atras.map(lin).join('\n')}`);
-    if (hoje.length) partes.push(`📌 *Hoje (${hoje.length})*\n${hoje.map(lin).join('\n')}`);
-    if (depois.length) partes.push(`📅 *Ainda nesta semana (${depois.length})*\n${depois.map(lin).join('\n')}`);
+    partes.push(`📏 *Leituras — ${lider}*\nSemana de ${periodo} · ✅ ${feitas.length} de ${total}`);
+    if (feitas.length) partes.push(`✅ *Feitas (${feitas.length})*\n${feitas.map((i) => `• *${titulo(i.nome)}*${i.feita.quem ? ` · ${i.feita.quem}` : ''}`).join('\n')}`);
+    if (atras.length) partes.push(`⚠️ *Atrasadas, da semana passada (${atras.length})*\n${atras.map(lin).join('\n')}`);
+    if (semana.length) partes.push(`❌ *Falta fazer nesta semana (${semana.length})*\n${semana.map(lin).join('\n')}`);
     if (!atras.length && !semana.length) partes.push('🎉 Todas as leituras da semana foram feitas.');
   }
   return partes.join('\n\n');
@@ -338,7 +339,7 @@ export async function verificarParabens() {
     if (await getSetting(chave)) continue;
     await setSetting(chave, new Date().toISOString());
     await sendText(g.jid, `🎉 *Parabéns, ${g.lider}!*\n\nTodas as leituras da semana foram feitas (${feitas.length}):\n` +
-      feitas.sort((a, b) => a.feita.data.localeCompare(b.feita.data)).map((i) => `✅ ${titulo(i.nome)} — ${ddmm(i.feita.data)}`).join('\n') +
+      feitas.sort((a, b) => a.nome.localeCompare(b.nome)).map((i) => `✅ ${titulo(i.nome)}`).join('\n') +
       `\n\nObrigado pelo empenho! 👏`);
     console.log(`[leituras] parabéns enviado para ${g.lider}`);
   }
