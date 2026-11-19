@@ -145,6 +145,10 @@ async function aprenderVistoriador(msg, nome) {
 // ---------- detecção nas mensagens ----------
 const PREFILTRO = /(cheg|estou n|estamos n|t[oô] n[oa]|presente|no local|aqui n[oa]|in[ií]ci|vistori|visita|ronda|inspe[cç]|sa[ií]ndo|saida|sa[ií]da|finaliz|encerr|conclu|termin|deixando|j[aá] sa[ií]|at[eé] a pr[oó]xima|retornando|indo embora)/i;
 
+// Prova de que a pessoa ESTÁ ou ESTEVE no condomínio. Sem isso (e sem foto/vídeo), mensagem de texto não vira ida:
+// avisar, responder, cobrar ou combinar pelo grupo não é ir ao condomínio.
+export const PRESENCA = /(cheguei|chegamos|chegando a[ií]|estou aqui|estamos aqui|t[oô] aqui|aqui n[oa] (condom|pr[eé]dio|edif|port|garag|local)|(estou|estamos|t[oô]) n[oa] (condom|pr[eé]dio|edif|local|hall|t[eé]rreo|subsolo|telhado|sal[aã]o|playground|portaria|garagem|guarita|cobertura|piscina|casa de|[aá]rea)|presente|no local|in loco|estive|estivemos|passei (a[ií]|aqui|hoje|n[oa] |pel[oa])|fui (a[ií]|hoje|n[oa] |ao |at[eé])|fomos (a[ií]|hoje|n[oa] |ao )|vistoria (realizada|feita|conclu|finaliz|em andamento|ok)|realizei|realizamos|fiz a (vistoria|visita|leitura|entrega|ronda)|finaliz|encerr|sa[ií]ndo|deixei|entreguei|retirei|levei|acompanhei|acompanhando|verifiquei|constatei|conferi |segue[m]? (a |as |o |os )?(fotos?|imagens?|v[ií]deos?|registros?)|seguem fotos|fotos? (da|do|de) (vistoria|visita))/i;
+
 // Aviso de visita/vistoria escrito por QUALQUER pessoa (a IA decide se é funcionário da Alpha)
 export const AVISO_VISITA = /(vistori|estou no condom|estamos no condom|cheguei (no|ao) (condom|pr[eé]dio|edif)|presente no (local|condom)|no local para|visita (t[eé]cnica|de rotina|semanal))/i;
 
@@ -348,7 +352,12 @@ async function processarVisitaAgora(chat, condoKey, msg) {
     `Horário: ${fmt(ts, { weekday: 'long', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}\n` +
     `Visita aberta hoje: ${aberta ? `sim, entrada às ${aberta.entrada ? hora(aberta.entrada) : '?'}` : 'não'}\n` +
     `Mensagem: ${msg.text.slice(0, 1500)}`, { leve: true });
-  const evento = r?.evento || 'nenhum';
+  let evento = r?.evento || 'nenhum';
+  // trava: texto sem sinal de presença no local não vira ida (ex.: "Bom dia, amanhã passo aí", aviso, cobrança)
+  if (evento !== 'nenhum' && !PRESENCA.test(msg.text)) {
+    console.log(`[visita] ignorada (sem sinal de presença) ${vistoriador} em ${chat.condo_name || condoKey}: ${String(msg.text).slice(0, 80)}`);
+    evento = 'nenhum';
+  }
   if (evento !== 'nenhum' && !msg.equipe && conhecido) await aprenderVistoriador(msg, vistoriador);
   const nome = chat.condo_name || condoKey;
   const txt = msg.text.slice(0, 500);
@@ -845,6 +854,12 @@ export async function verificarSemana(offset = 0, { aoProgresso } = {}) {
         }).join('\n'), { leve: true });
       for (const v of r?.visitas || []) {
         if (!v?.data || !v?.entrada) continue;
+        // trava: precisa de foto/vídeo ou mensagem com sinal de presença naquele dia
+        const doDia = msgs.filter((m) => fmt(m.ts, { day: '2-digit', month: '2-digit' }) === String(v.data).slice(0, 5).padStart(5, '0'));
+        const quem1 = normalize(v.quem || '').split(' ')[0];
+        const prova = doDia.some((m) => (m.from_me || /alpha\s+(administradora|condom)/i.test(m.text || '') || (quem1 && normalize(m.author_name || '').includes(quem1))) &&
+          (PRESENCA.test(m.text || '') || /^\[(imagem|vídeo)\]/.test(String(m.text || '').trim())));
+        if (!prova) { console.log(`[verificar] ${it.nome} ${v.data}: sem prova de presença, não registrada`); continue; }
         const entrada = dataHoraBR(v.data, v.entrada);
         if (isNaN(entrada) || entrada < inicio || entrada >= fim) continue;
         const saida = v.saida && /\d/.test(v.saida) ? dataHoraBR(v.data, v.saida) : null;
