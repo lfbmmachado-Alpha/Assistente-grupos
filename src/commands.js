@@ -5,7 +5,7 @@ import { lerDocumento } from './gemini.js';
 import {
   relatorio, historico, linhaVisita, removerVisita, lancarManual, listarCarteira, importarCarteira,
   enviarPlanilha, semana, dataHoraBR, definirApelido, reprocessarSemana, diagnostico, verificarSemana, semGrupo,
-  removerDaCarteira, incluirNaCarteira, buscarNaCarteira, registrarSaida, compararLista, apagarVisitas, listarEnvios, salvarEnvio, removerEnvio, enviarRelatorioVistoriador,
+  removerDaCarteira, incluirNaCarteira, buscarNaCarteira, registrarSaida, compararLista, apagarVisitas, consolidarDuplicadas, listarEnvios, salvarEnvio, removerEnvio, enviarRelatorioVistoriador,
 } from './visitas.js';
 import { getVistoriadores } from './util.js';
 import { perguntar, limparConversa } from './consulta.js';
@@ -64,6 +64,7 @@ Citando um condomínio, ela foca nele — ex.: _como está o clima no Floresta?_
 !vistorias sem grupo — condomínios do quadro sem grupo da IA e grupos fora do quadro
 !vistorias comparar + lista colada — compara a lista da equipe com o que está registrado
 !vistorias apagar Nome [dd/mm] — apaga ida registrada por engano (não volta na verificação)
+!vistorias limpar — junta registros repetidos da mesma ida
 !vistorias lancar + lista colada — compara e lança o que faltar
 !vistorias verificar [passada] — verificação geral: a IA lê todas as mensagens da semana e acha idas que passaram
 !visita Nome dd/mm hh:mm-hh:mm Vistoriador [extra motivo] — lança à mão
@@ -412,6 +413,11 @@ export async function handleCommand(msg, suggestionGroup) {
         const nome = args.slice(sub === 'por' ? 2 : 1).join(' ');
         if (!nome) { await reply('Use: !vistorias diagnostico toscana'); return true; }
         await reply(await diagnostico(nome));
+        return true;
+      }
+      if (sub === 'limpar' || sub === 'juntar' || sub === 'duplicadas') {
+        const n = await consolidarDuplicadas();
+        await reply(n ? `🧹 Juntei ${n} registro(s) repetido(s) da mesma ida.` : '✅ Nenhuma ida repetida.');
         return true;
       }
       if (sub === 'apagar' || sub === 'remover' || sub === 'excluir') {

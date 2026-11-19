@@ -37,6 +37,7 @@ export async function initVisitas() {
     await setSetting('sairam_aplicado', new Date().toISOString());
   }
   await ajustarOrdinarias();
+  await consolidarDuplicadas().catch((e) => console.error('[visita] consolidar', e.message));
 }
 
 // Semana sem ordinária mas com alguma ida → a primeira ida da semana passa a contar como a visita da semana
@@ -167,14 +168,94 @@ mensagens como "Bom dia, estou no condomínio para a vistoria" são da Alpha; mo
 terceirizado (eletricista, empresa de portão, dedetizadora) NÃO contam → "nenhum".
 Responda SOMENTE JSON: {"evento":"entrada|saida|durante|nenhum","tipo":"ordinaria|extraordinaria|indefinido","motivo":"poucas palavras ou vazio"}`;
 
+// Visita em curso neste condomínio: a aberta do dia OU uma que terminou (saída estimada) há menos de 90 min.
+// Assim fotos em sequência, mensagens fora de ordem e a mesma ida contada por duas pessoas viram UMA visita.
 async function visitaAberta(condoKey, vistoriador, ts) {
   const r = await q(
-    `SELECT * FROM visitas WHERE condo_key = $1 AND vistoriador = $2 AND saida IS NULL
-     ORDER BY COALESCE(entrada, ultima_atividade) DESC LIMIT 1`,
-    [condoKey, vistoriador]
+    `SELECT * FROM visitas WHERE condo_key = $1 AND entrada IS NOT NULL AND origem <> 'lista'
+       AND entrada <= $2::timestamptz + interval '30 minutes'
+       AND COALESCE(saida, ultima_atividade, entrada) >= $2::timestamptz - interval '90 minutes'
+     ORDER BY (vistoriador = $3) DESC, (saida IS NULL) DESC, entrada DESC LIMIT 1`,
+    [condoKey, ts, vistoriador]
   );
   const v = r.rows[0];
-  return v && diaBR(v.entrada || v.ultima_atividade) === diaBR(ts) ? v : null;
+  if (!v || diaBR(v.entrada) !== diaBR(ts)) return null;
+  // mensagem depois de uma saída só estimada: a visita continuava, reabre
+  if (v.saida && v.saida_estimada && new Date(ts) > new Date(v.saida)) {
+    await q(`UPDATE visitas SET saida = NULL, saida_estimada = FALSE WHERE id = $1`, [v.id]);
+    v.saida = null;
+  }
+  // mensagem antes da entrada registrada (chegou fora de ordem): adianta a entrada
+  if (new Date(ts) < new Date(v.entrada)) {
+    await q(`UPDATE visitas SET entrada = $2 WHERE id = $1`, [v.id, ts]);
+    v.entrada = ts;
+  }
+  return v;
+}
+
+// Mensagens do mesmo condomínio são processadas uma de cada vez (fotos de um álbum chegam juntas)
+const filaCondo = new Map();
+function emFila(chave, fn) {
+  const ant = filaCondo.get(chave) || Promise.resolve();
+  const prox = ant.catch(() => {}).then(fn);
+  filaCondo.set(chave, prox.finally(() => { if (filaCondo.get(chave) === prox) filaCondo.delete(chave); }));
+  return prox;
+}
+
+// Junta registros repetidos da MESMA ida (mesmo condomínio, mesmo dia, horários sobrepostos ou a menos de 90 min).
+// A lançada pela lista (sem horário) some se houver uma ida com horário no mesmo dia.
+export async function consolidarDuplicadas() {
+  const rows = (await q(
+    `SELECT * FROM visitas WHERE COALESCE(entrada, saida, ultima_atividade) IS NOT NULL
+     ORDER BY condo_key, COALESCE(entrada, saida, ultima_atividade), id`)).rows;
+  const ref = (v) => new Date(v.entrada || v.saida || v.ultima_atividade);
+  const fimDe = (v) => new Date(v.saida || v.ultima_atividade || v.entrada || ref(v));
+  const grupos = new Map();
+  for (const v of rows) {
+    const k = `${v.condo_key}|${diaBR(ref(v))}`;
+    grupos.set(k, [...(grupos.get(k) || []), v]);
+  }
+  let removidas = 0;
+  for (const lista of grupos.values()) {
+    if (lista.length < 2) continue;
+    const comHora = lista.filter((v) => v.origem !== 'lista');
+    if (comHora.length) {
+      for (const v of lista.filter((x) => x.origem === 'lista')) {
+        // a lista confirmava a ida; a de horário passa a ser a vistoria se a da lista era
+        if (v.tipo === 'ordinaria') await q(`UPDATE visitas SET tipo = 'ordinaria' WHERE id = $1`, [comHora[0].id]);
+        await q('DELETE FROM visitas WHERE id = $1', [v.id]); removidas++;
+      }
+    }
+    const blocos = [];
+    for (const v of comHora) {
+      const b = blocos[blocos.length - 1];
+      if (b && ref(v) - b.fim <= 90 * 60000) { b.itens.push(v); if (fimDe(v) > b.fim) b.fim = fimDe(v); }
+      else blocos.push({ itens: [v], fim: fimDe(v) });
+    }
+    for (const { itens } of blocos) {
+      if (itens.length < 2) continue;
+      const manter = itens[0];
+      const entradas = itens.filter((x) => x.entrada).map((x) => new Date(x.entrada));
+      const reais = itens.filter((x) => x.saida && !x.saida_estimada).map((x) => new Date(x.saida));
+      const est = itens.filter((x) => x.saida).map((x) => new Date(x.saida));
+      const saida = reais.length ? new Date(Math.max(...reais)) : est.length ? new Date(Math.max(...est)) : null;
+      const motivos = [...new Set(itens.map((x) => (x.motivo || '').trim()).filter(Boolean))];
+      const motivo = (motivos.length > 1 ? motivos.filter((m) => !/^fotos no grupo$/i.test(m)) : motivos).join('; ').slice(0, 250) || null;
+      const quem = [...new Set(itens.map((x) => x.vistoriador).filter(Boolean))].join(' e ');
+      const ultima = new Date(Math.max(...itens.map((x) => fimDe(x))));
+      await q(
+        `UPDATE visitas SET entrada = $2, saida = $3, saida_estimada = $4, motivo = $5, vistoriador = $6, ultima_atividade = $7,
+           tipo = $8 WHERE id = $1`,
+        [manter.id, entradas.length ? new Date(Math.min(...entradas)) : manter.entrada, saida, !!saida && !reais.length, motivo,
+          quem || manter.vistoriador, ultima, itens.some((x) => x.tipo === 'ordinaria') ? 'ordinaria' : manter.tipo]);
+      for (const x of itens.slice(1)) { await q('DELETE FROM visitas WHERE id = $1', [x.id]); removidas++; }
+    }
+  }
+  if (removidas) {
+    await ajustarOrdinarias();
+    console.log(`[visita] ${removidas} registro(s) repetido(s) da mesma ida foram juntados`);
+  }
+  return removidas;
 }
 
 // A primeira visita da semana que mencione "vistoria" conta como a ordinária, mesmo junto com outra tarefa
@@ -230,7 +311,10 @@ export async function registrarSaida(condoKey, quando) {
 }
 
 // Chamado para toda mensagem da equipe num grupo de condomínio (independe do modo teste)
-export async function processarVisita(chat, condoKey, msg) {
+export function processarVisita(chat, condoKey, msg) {
+  return emFila(condoKey, () => processarVisitaAgora(chat, condoKey, msg));
+}
+async function processarVisitaAgora(chat, condoKey, msg) {
   const vistoriador = await nomeVistoriador(msg);
   const ts = msg.ts;
   // mesma mensagem já registrada (reprocessamento)
@@ -674,6 +758,7 @@ export async function reprocessarSemana(offset = 0) {
         { text: m.text, ts: new Date(m.ts), authorName: m.author_name, authorJid: m.author_jid, authorAlt: '', equipe: m.from_me });
     } catch (e) { console.error('[visita] reprocessar', e.message); }
   }
+  await consolidarDuplicadas().catch(() => {});
   const depois = (await q(`SELECT COUNT(*)::int AS n FROM visitas`)).rows[0].n;
   return { lidas, novas: depois - antes };
 }
@@ -781,6 +866,7 @@ export async function verificarSemana(offset = 0, { aoProgresso } = {}) {
       console.error('[verificar]', it.nome, e.message);
     }
   }
+  await consolidarDuplicadas().catch(() => {});
   return { conferidos: alvos.length, semMsgs, achados };
 }
 
@@ -959,6 +1045,7 @@ export async function compararLista(texto, { lancar = false } = {}) {
       }
     }
   }
+  if (lancar) await consolidarDuplicadas().catch(() => {});
   // se a 1ª ida da semana ficou como extra, a correção do início acerta; aqui só garantimos a regra
   const msgs = [];
   msgs.push(

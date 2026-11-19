@@ -156,12 +156,12 @@ function criarResumo(ss) {
   r.getRange('A2').setValue('Total de idas registradas desde o início. Para um período, use a aba Assembleia.').setFontColor('#666666');
   r.getRange('A4:F4').setValues([['Condomínio', 'Responsável', 'Vistorias', 'Idas extras', 'Total de idas', 'Última ida']])
     .setFontWeight('bold').setBackground(AZUL).setFontColor('#ffffff').setHorizontalAlignment('center');
-  r.getRange('A5').setFormula('=IFERROR(SORT(UNIQUE(FILTER({' + ABA + '!F2:F, ' + ABA + '!G2:G}, ' + ABA + '!F2:F<>""))), )');
-  r.getRange('C5').setFormula('=ARRAYFORMULA(IF(A5:A="", , COUNTIFS(' + ABA + '!F2:F, A5:A, ' + ABA + '!I2:I, "Vistoria da semana")))');
-  r.getRange('D5').setFormula('=ARRAYFORMULA(IF(A5:A="", , COUNTIFS(' + ABA + '!F2:F, A5:A, ' + ABA + '!I2:I, "Ida extra")))');
-  r.getRange('E5').setFormula('=ARRAYFORMULA(IF(A5:A="", , C5:C + D5:D))');
+  formula(r.getRange('A5'), '=IFERROR(SORT(UNIQUE(FILTER({' + ABA + '!F2:F, ' + ABA + '!G2:G}, ' + ABA + '!F2:F<>""))), )');
+  formula(r.getRange('C5'), '=ARRAYFORMULA(IF(A5:A="", , COUNTIFS(' + ABA + '!F2:F, A5:A, ' + ABA + '!I2:I, "Vistoria da semana")))');
+  formula(r.getRange('D5'), '=ARRAYFORMULA(IF(A5:A="", , COUNTIFS(' + ABA + '!F2:F, A5:A, ' + ABA + '!I2:I, "Ida extra")))');
+  formula(r.getRange('E5'), '=ARRAYFORMULA(IF(A5:A="", , C5:C + D5:D))');
   // a aba Idas fica ordenada da mais recente para a mais antiga: a 1ª ocorrência é a última ida
-  r.getRange('F5').setFormula('=ARRAYFORMULA(IF(A5:A="", , IFERROR(VLOOKUP(A5:A, {' + ABA + '!F2:F, ' + ABA + '!B2:B}, 2, FALSE))))');
+  formula(r.getRange('F5'), '=ARRAYFORMULA(IF(A5:A="", , IFERROR(VLOOKUP(A5:A, {' + ABA + '!F2:F, ' + ABA + '!B2:B}, 2, FALSE))))');
   r.getRange('F5:F').setNumberFormat('dd/mm/yyyy');
   r.getRange('C5:F').setHorizontalAlignment('center');
   r.getRange('A5:A').setFontWeight('bold');
@@ -202,10 +202,10 @@ function criarAssembleia(ss) {
   // indicadores
   const cond = ABA + '!F2:F, $B$4, ' + ABA + '!B2:B, ">="&$B$5, ' + ABA + '!B2:B, "<="&$B$6';
   a.getRange('A8:I8').setValues([['Vistorias', '', 'Idas extras', 'Total de idas', 'Tempo no condomínio', '', '', '', '']]);
-  a.getRange('A9').setFormula('=IF($B$4="", "", COUNTIFS(' + cond + ', ' + ABA + '!I2:I, "Vistoria da semana"))');
-  a.getRange('C9').setFormula('=IF($B$4="", "", COUNTIFS(' + cond + ', ' + ABA + '!I2:I, "Ida extra"))');
-  a.getRange('D9').setFormula('=IF($B$4="", "", A9 + C9)');
-  a.getRange('E9').setFormula('=IF($B$4="", "", IFERROR(TEXT(SUMPRODUCT((' + ABA + '!F2:F=$B$4)*(' + ABA + '!B2:B>=$B$5)*(' + ABA + '!B2:B<=$B$6)*IFERROR(TIMEVALUE(' + ABA + '!N2:N&":00"), 0)), "[h]:mm") & " h", "-"))');
+  formula(a.getRange('A9'), '=IF($B$4="", "", COUNTIFS(' + cond + ', ' + ABA + '!I2:I, "Vistoria da semana"))');
+  formula(a.getRange('C9'), '=IF($B$4="", "", COUNTIFS(' + cond + ', ' + ABA + '!I2:I, "Ida extra"))');
+  formula(a.getRange('D9'), '=IF($B$4="", "", A9 + C9)');
+  formula(a.getRange('E9'), '=IF($B$4="", "", IFERROR(TEXT(SUMPRODUCT((' + ABA + '!F2:F=$B$4)*(' + ABA + '!B2:B>=$B$5)*(' + ABA + '!B2:B<=$B$6)*IFERROR(TIMEVALUE(' + ABA + '!N2:N&":00"), 0)), "[h]:mm") & " h", "-"))');
   a.getRange('A8:B8').merge(); a.getRange('A9:B9').merge();
   a.getRange('A8:E8').setFontColor('#666666').setFontSize(9).setHorizontalAlignment('center');
   a.getRange('A9:E9').setFontSize(20).setFontWeight('bold').setFontColor(AZUL).setHorizontalAlignment('center');
@@ -216,7 +216,7 @@ function criarAssembleia(ss) {
   a.getRange('A11:I11').setValues([['Data', 'Dia', 'Quem foi', 'Tipo', 'Motivo / causa', 'Entrada', 'Saída', 'Duração', 'Observação']])
     .setFontWeight('bold').setBackground(AZUL).setFontColor('#ffffff').setHorizontalAlignment('center');
   const col = (c) => ABA + '!' + c + '2:' + c;
-  a.getRange('A12').setFormula('=IF($B$4="", "Escolha o condomínio em B4", IFERROR(SORT(FILTER({' +
+  formula(a.getRange('A12'), '=IF($B$4="", "Escolha o condomínio em B4", IFERROR(SORT(FILTER({' +
     ['B', 'C', 'H', 'I', 'J', 'K', 'L', 'N', 'Q'].map(col).join(', ') + '}, ' +
     col('F') + '=$B$4, ' + col('B') + '>=$B$5, ' + col('B') + '<=$B$6), 1, TRUE), "Nenhuma ida registrada no período."))');
   a.getRange('A12:A').setNumberFormat('dd/mm/yyyy');
@@ -231,7 +231,27 @@ function criarAssembleia(ss) {
   ]);
   // primeiro condomínio da lista já selecionado, para não abrir vazio
   SpreadsheetApp.flush();
-  const primeiro = ss.getSheetByName(ABA_RESUMO).getRange('A5').getValue();
-  if (primeiro) a.getRange('B4').setValue(primeiro);
+  const primeiro = String(ss.getSheetByName(ABA_RESUMO).getRange('A5').getDisplayValue() || '');
+  if (primeiro && primeiro.charAt(0) !== '#') a.getRange('B4').setValue(primeiro);
   try { a.activate(); } catch (e) {}
+}
+
+// ---------------------------------------------------------------- fórmulas e idioma da planilha
+// Planilha em português usa ";" entre argumentos e "\\" entre colunas de { }. Escreve a fórmula no padrão
+// americano e, se a planilha acusar erro, troca os separadores.
+function formula(range, f) {
+  range.setFormula(f);
+  SpreadsheetApp.flush();
+  if (String(range.getDisplayValue()).indexOf('#ERROR') === 0) range.setFormula(paraPtBr(f));
+  return range;
+}
+function paraPtBr(f) {
+  let out = '', aspas = false, chaves = 0;
+  for (const ch of f) {
+    if (ch === '"') aspas = !aspas;
+    if (!aspas && ch === '{') chaves++;
+    if (!aspas && ch === '}') chaves--;
+    out += !aspas && ch === ',' ? (chaves > 0 ? '\\' : ';') : ch;
+  }
+  return out;
 }
