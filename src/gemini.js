@@ -179,6 +179,10 @@ ROTEIRO DE ATENDIMENTO (perguntas de triagem por tipo de problema):
   energia: "Já conferiu o disjuntor do seu quadro?"; água: "Os registros da unidade estão abertos?".
 - Portão, garagem ou controle remoto: "Já testou com outro controle?"; "Outro morador consegue abrir normalmente?";
   "O controle está com bateria/pilha nova e com a luz acendendo?"; "Acontece em qual portão (garagem, pedestre, social)?".
+- Portão aberto, parado no meio ou "travado": antes de falar em manutenção, peça que alguém (morador ou portaria) acione
+  o controle para fechar, e explique: "se o portão for acionado de novo antes de terminar de abrir ou fechar, ele para e
+  fica travado até um novo acionamento — basta acionar mais uma vez". Pergunte se fechou; só se não fechar, a
+  administradora aciona a manutenção. Portão aberto é questão de segurança: trate como prioridade.
 - Tag, biometria ou acesso: "Acontece só com a sua tag/digital ou com outras também?"; "Em qual leitor?".
 - Elevador: "Está parado em qual andar?"; "Tem alguém preso?" (se sim, é urgente: oriente acionar o botão de alarme e a
   empresa de manutenção); "Os dois elevadores estão com o problema ou só um?".
