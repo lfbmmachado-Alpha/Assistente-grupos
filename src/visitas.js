@@ -1162,8 +1162,17 @@ export async function painelVistorias(offset = 0) {
     const ok = meus.filter((i) => i.condo_key && feitos.has(i.condo_key));
     const pend = meus.filter((i) => !(i.condo_key && feitos.has(i.condo_key)));
     const keys = new Set(meus.map((i) => i.condo_key).filter(Boolean));
+    const ref = (v) => new Date(v.entrada || v.saida || v.ultima_atividade);
+    // detalhe para o relatório da semana: cada vistoria feita, com dia e horário
+    const detalhe = ok.map((i) => {
+      const v = vis.filter((x) => x.condo_key === i.condo_key && x.tipo === 'ordinaria').sort((a, b) => ref(a) - ref(b))[0];
+      const semHora = v.origem === 'lista';
+      return { condo: i.nome, data: dataCurta(ref(v)), dia: diaSemana(ref(v)), ts: ref(v).getTime(),
+        entrada: v.entrada && !semHora ? hora(v.entrada) : '', saida: v.saida && !semHora ? hora(v.saida) + (v.saida_estimada ? '*' : '') : '',
+        quem: v.vistoriador || '', motivo: v.motivo && !/lan[cç]ada pela lista/i.test(v.motivo) ? v.motivo : '' };
+    }).sort((a, b) => a.ts - b.ts);
     return { nome, total: meus.length, feitas: ok.length, extras: extras.filter((v) => keys.has(v.condo_key)).length,
-      pendentes: pend.map((i) => i.nome + (i.temGrupo ? '' : ' (sem grupo)')) };
+      pendentes: pend.map((i) => i.nome + (i.temGrupo ? '' : ' (sem grupo)')), detalhe };
   });
   const ultimo = new Date(fim.getTime() - 86400000);
   return {

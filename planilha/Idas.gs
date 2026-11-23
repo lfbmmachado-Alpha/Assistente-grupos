@@ -56,7 +56,8 @@ function onOpen() {
     .addItem('Atualizar idas agora', 'atualizarIdas')
     .addItem('Ligar atualização automática (a cada 10 min)', 'instalarGatilho')
     .addSeparator()
-    .addItem('📄 Gerar relatório em PDF (condomínio escolhido)', 'gerarRelatorioPDF')
+    .addItem('📄 Relatório de idas do condomínio (PDF)', 'gerarRelatorioPDF')
+    .addItem('📋 Relatório de vistorias da semana (PDF)', 'abrirRelatorioSemana')
     .addSeparator()
     .addItem('Refazer layout', 'refazerLayout')
     .addToUi();
@@ -300,18 +301,12 @@ function escreverPainel(ss, P, quando) {
     lin++;
   };
 
-  // ---- gráficos (dados na aba oculta _Listas)
+  // ---- gráficos: os números ficam nas próprias células embaixo de cada gráfico (o gráfico cobre e esconde)
   const lst = ss.getSheetByName(ABA_LISTAS);
-  lst.getRange('C1:H60').clearContent();
   const dv = [['Colaborador', 'Feitas', 'Pendentes']].concat((V.pessoas || []).map((p) => [p.nome, p.feitas, p.total - p.feitas]));
   const dl = [['Responsável', 'Feitas', 'A fazer']].concat((L.pessoas || []).map((p) => [p.nome, p.feitas, p.total - p.feitas]));
-  lst.getRange(1, 3, dv.length, 3).setValues(dv);
-  lst.getRange(1, 7, dl.length, 3).setValues(dl);
-  SpreadsheetApp.flush(); // os dados precisam estar gravados antes de o gráfico ler
-  // a aba _Listas é oculta: sem SHOW_BOTH o gráfico ignora dados ocultos e fica em branco
   const grafico = (range, titulo, linha, coluna, largura) => r.insertChart(r.newChart()
     .setChartType(Charts.ChartType.BAR).addRange(range).setNumHeaders(1)
-    .setHiddenDimensionStrategy(Charts.ChartHiddenDimensionStrategy.SHOW_BOTH)
     .setOption('isStacked', true).setOption('title', titulo)
     .setOption('titleTextStyle', { color: TEXTO, fontSize: 13, bold: true })
     .setOption('colors', [OK, '#e57373']).setOption('legend', { position: 'top', textStyle: { color: SUAVE } })
@@ -321,8 +316,11 @@ function escreverPainel(ss, P, quando) {
     .setOption('width', largura).setOption('height', 260)
     .setPosition(linha, coluna, 0, 0).build());
   secao('Visão geral');
-  grafico(lst.getRange(1, 3, dv.length, 3), 'Vistorias da semana por colaborador', lin, PC.NOME, 560);
-  grafico(lst.getRange(1, 7, dl.length, 3), 'Leituras do mês por responsável', lin, PC.BARRA + 1, 560);
+  const rv = r.getRange(lin, PC.NOME, dv.length, 3).setValues(dv).setFontColor(FUNDO).setFontSize(6);
+  const rl = r.getRange(lin, PC.BARRA + 1, dl.length, 3).setValues(dl).setFontColor(FUNDO).setFontSize(6);
+  SpreadsheetApp.flush();
+  grafico(rv, 'Vistorias da semana por colaborador', lin, PC.NOME, 560);
+  grafico(rl, 'Leituras do mês por responsável', lin, PC.BARRA + 1, 560);
   for (let i = 0; i < 13; i++) r.setRowHeight(lin + i, 21);
   lin += 14;
 
@@ -755,5 +753,103 @@ function montarRelatorioHTML(condo, de, ate, dados, equipe) {
     '</div>' +
     '<div style="border-top:1px solid ' + linha + ';margin-top:26px;padding-top:8px;font-size:8.5px;color:' + suave + '">' +
       'Alpha Administradora · alphacondominios.com</div>' +
+    '</body></html>';
+}
+
+// ---------------------------------------------------------------- relatório da semana (vistorias feitas e a fazer)
+function abrirRelatorioSemana() {
+  const sem = buscarSemana(0);
+  const nomes = (sem.pessoas || []).map((p) => p.nome);
+  const opcoesSemana = [['0', 'Esta semana'], ['-1', 'Semana passada'], ['-2', 'Há 2 semanas'], ['-3', 'Há 3 semanas'], ['-4', 'Há 4 semanas']]
+    .map((o) => '<option value="' + o[0] + '">' + o[1] + '</option>').join('');
+  const opcoesPessoa = ['<option value="">Todos os colaboradores</option>'].concat(nomes.map((n) => '<option>' + escapar(n) + '</option>')).join('');
+  const html = HtmlService.createHtmlOutput(
+    '<div style="font-family:Arial,sans-serif;font-size:13px;color:#1f2a44;padding:4px">' +
+    '<label style="font-size:11px;color:#7a869a;font-weight:bold">SEMANA</label><br>' +
+    '<select id="s" style="width:100%;padding:7px;margin:4px 0 12px;font-size:13px">' + opcoesSemana + '</select><br>' +
+    '<label style="font-size:11px;color:#7a869a;font-weight:bold">COLABORADOR</label><br>' +
+    '<select id="p" style="width:100%;padding:7px;margin:4px 0 16px;font-size:13px">' + opcoesPessoa + '</select><br>' +
+    '<button id="b" onclick="gerar()" style="background:#1f3864;color:#fff;border:0;padding:10px 18px;border-radius:6px;font-size:13px;cursor:pointer">Gerar PDF</button>' +
+    '<div id="r" style="margin-top:14px;font-size:12px"></div></div>' +
+    '<script>function gerar(){var b=document.getElementById("b");b.disabled=true;b.textContent="Gerando…";' +
+    'google.script.run.withSuccessHandler(function(u){b.disabled=false;b.textContent="Gerar PDF";' +
+    'document.getElementById("r").innerHTML=\'<a href="\'+u+\'" target="_blank" style="color:#1f3864;font-weight:bold">Abrir PDF</a> · salvo em Alpha - Relatórios de visitas\';})' +
+    '.withFailureHandler(function(e){b.disabled=false;b.textContent="Gerar PDF";document.getElementById("r").textContent="Erro: "+e.message;})' +
+    '.gerarRelatorioSemana(Number(document.getElementById("s").value),document.getElementById("p").value);}</script>'
+  ).setWidth(360).setHeight(300);
+  SpreadsheetApp.getUi().showModalDialog(html, 'Relatório de vistorias da semana');
+}
+
+function buscarSemana(offset) {
+  const url = URL_IDAS.replace('/api/idas/', '/api/semana/') + '?offset=' + offset;
+  const res = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+  if (res.getResponseCode() !== 200) throw new Error('O servidor respondeu ' + res.getResponseCode() + ' (confira se o sistema está na versão mais nova).');
+  return JSON.parse(res.getContentText());
+}
+
+function gerarRelatorioSemana(offset, pessoa) {
+  const sem = buscarSemana(offset || 0);
+  let pessoas = sem.pessoas || [];
+  if (pessoa) pessoas = pessoas.filter((p) => p.nome === pessoa);
+  const html = montarRelatorioSemanaHTML(sem, pessoas, pessoa);
+  const nome = 'Vistorias da semana ' + String(sem.semana).replace(/\//g, '-') + (pessoa ? ' - ' + pessoa : '') + '.pdf';
+  const arq = pastaRelatorios().createFile(Utilities.newBlob(html, 'text/html', 'semana.html').getAs('application/pdf').setName(nome));
+  return arq.getUrl();
+}
+
+function montarRelatorioSemanaHTML(sem, pessoas, filtroPessoa) {
+  const azul = '#1f3864', suave = '#6b778c', linha = '#dfe5ee', ok = '#2e7d32', ruim = '#c62828';
+  const total = pessoas.reduce((t, p) => t + p.total, 0);
+  const feitas = pessoas.reduce((t, p) => t + p.feitas, 0);
+  const pct = total ? Math.round((feitas / total) * 100) : 0;
+  const logo = logoBase64();
+  const marca = logo
+    ? '<img src="' + logo + '" style="height:54px">'
+    : '<div style="font-size:24px;font-weight:bold;color:' + azul + ';letter-spacing:1px">ALPHA</div><div style="font-size:10px;color:' + suave + ';letter-spacing:3px">ADMINISTRADORA</div>';
+  const caixa = (titulo, valor, cor) =>
+    '<td style="width:25%;padding:0 6px"><div style="border:1px solid ' + linha + ';border-left:4px solid ' + cor + ';padding:10px 12px;border-radius:4px">' +
+    '<div style="font-size:9px;color:' + suave + ';font-weight:bold;letter-spacing:1px">' + titulo + '</div>' +
+    '<div style="font-size:22px;font-weight:bold;color:' + cor + ';margin-top:4px">' + valor + '</div></div></td>';
+  const th = (t, al) => '<th style="padding:6px 8px;text-align:' + (al || 'left') + ';font-size:9px;letter-spacing:.5px;color:#fff;background:' + azul + '">' + t + '</th>';
+  const barra = (p) => '<table style="border-collapse:collapse;width:160px;height:8px"><tr>' +
+    (p ? '<td style="width:' + p + '%;background:' + (p >= 80 ? ok : p >= 50 ? '#f9a825' : ruim) + ';height:8px"></td>' : '') +
+    (p < 100 ? '<td style="background:' + linha + ';height:8px"></td>' : '') + '</tr></table>';
+  const blocos = pessoas.map((p) => {
+    const pc = p.total ? Math.round((p.feitas / p.total) * 100) : 0;
+    const chave = Object.keys(LIDERANCA).find((k) => k.toLowerCase() === String(p.nome).toLowerCase());
+    const feitasTab = (p.detalhe || []).length
+      ? '<table style="width:100%;border-collapse:collapse;font-size:10px;margin-top:6px"><tr>' + th('DATA') + th('DIA') + th('CONDOMÍNIO') + th('ENTRADA', 'center') + th('SAÍDA', 'center') + th('QUEM FOI') + '</tr>' +
+        p.detalhe.map((d, i) => '<tr style="background:' + (i % 2 ? '#f7f9fc' : '#fff') + '"><td style="padding:5px 8px;font-weight:bold">' + d.data + '</td><td style="padding:5px 8px;color:' + suave + '">' + d.dia +
+          '</td><td style="padding:5px 8px;font-weight:bold">' + escapar(d.condo) + '</td><td style="padding:5px 8px;text-align:center">' + (d.entrada || '—') + '</td><td style="padding:5px 8px;text-align:center">' + (d.saida || '—') +
+          '</td><td style="padding:5px 8px">' + escapar(d.quem) + '</td></tr>').join('') + '</table>'
+      : '<p style="color:' + suave + ';margin:6px 0">Nenhuma vistoria registrada na semana.</p>';
+    const pend = (p.pendentes || []).length
+      ? '<div style="margin-top:6px;line-height:2">' + p.pendentes.map((n) => '<span style="display:inline-block;font-size:9.5px;padding:2px 8px;margin:0 4px 4px 0;border-radius:9px;background:#fdecea;color:' + ruim + '">' + escapar(n) + '</span>').join('') + '</div>'
+      : '<p style="color:' + ok + ';margin:6px 0;font-weight:bold">✓ Todos os condomínios vistoriados.</p>';
+    return '<div style="page-break-inside:avoid;margin-top:22px;border:1px solid ' + linha + ';border-radius:6px;padding:12px 14px">' +
+      '<table style="width:100%;border-collapse:collapse"><tr><td><div style="font-size:15px;font-weight:bold;color:' + azul + '">' + escapar(p.nome) + '</div>' +
+      (chave ? '<div style="font-size:9px;color:' + suave + ';margin-top:2px">Liderança direta: <b>' + escapar(LIDERANCA[chave]) + '</b></div>' : '') + '</td>' +
+      '<td style="text-align:right"><div style="font-size:18px;font-weight:bold;color:' + (pc >= 80 ? ok : pc >= 50 ? '#f9a825' : ruim) + '">' + p.feitas + ' / ' + p.total + ' · ' + pc + '%</div>' +
+      '<div style="margin-top:4px;float:right">' + barra(pc) + '</div></td></tr></table>' +
+      '<div style="font-size:10px;font-weight:bold;color:' + ok + ';margin-top:10px;letter-spacing:.5px">✅ VISTORIAS FEITAS (' + p.feitas + ')</div>' + feitasTab +
+      '<div style="font-size:10px;font-weight:bold;color:' + ruim + ';margin-top:12px;letter-spacing:.5px">❌ A FAZER (' + (p.total - p.feitas) + ')</div>' + pend +
+      '</div>';
+  }).join('');
+  return '<html><head><meta charset="utf-8"></head><body style="font-family:Arial,Helvetica,sans-serif;color:#1f2a44;font-size:10px;margin:0">' +
+    '<table style="width:100%;border-collapse:collapse"><tr><td style="vertical-align:middle">' + marca + '</td>' +
+    '<td style="text-align:right;vertical-align:middle"><div style="font-size:16px;font-weight:bold;color:' + azul + '">RELATÓRIO DE VISTORIAS</div>' +
+    '<div style="font-size:9px;color:' + suave + ';margin-top:3px">Emitido em ' + fmtData(new Date()) + '</div></td></tr></table>' +
+    '<div style="height:3px;background:' + azul + ';margin:12px 0 18px"></div>' +
+    '<div style="font-size:9px;color:' + suave + ';letter-spacing:1px;font-weight:bold">SEMANA</div>' +
+    '<div style="font-size:22px;font-weight:bold;color:' + azul + ';margin:2px 0 4px">' + escapar(sem.semana) + '</div>' +
+    '<div style="font-size:11px;color:' + suave + '">' + (filtroPessoa ? 'Colaborador: <b style="color:#1f2a44">' + escapar(filtroPessoa) + '</b>' : 'Todos os colaboradores') + '</div>' +
+    '<table style="width:100%;border-collapse:collapse;margin:18px -6px 0"><tr>' +
+      caixa('VISTORIADOS', feitas + ' / ' + total, pct >= 80 ? ok : pct >= 50 ? '#f9a825' : ruim) + caixa('CONCLUÍDO', pct + '%', azul) +
+      caixa('A FAZER', total - feitas, (total - feitas) ? ruim : ok) + caixa('IDAS EXTRAS', pessoas.reduce((t, p) => t + p.extras, 0), '#ef6c00') +
+    '</tr></table>' +
+    blocos +
+    '<div style="margin-top:16px;font-size:8.5px;color:' + suave + ';line-height:1.5">Conta como vistoria a primeira ida da semana ao condomínio, de qualquer pessoa da equipe. ' +
+      'Horários registrados a partir dos avisos da equipe nos grupos do condomínio. * saída estimada. “(sem grupo)”: a IA não está no grupo desse condomínio.</div>' +
+    '<div style="border-top:1px solid ' + linha + ';margin-top:22px;padding-top:8px;font-size:8.5px;color:' + suave + '">Alpha Administradora · alphacondominios.com</div>' +
     '</body></html>';
 }

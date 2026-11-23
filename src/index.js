@@ -27,6 +27,16 @@ app.post('/api/leituras/:token/responsavel', async (req, res) => {
     res.json({ ok: true, condominio: c.nome, responsavel });
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
+// Planilha Google: vistorias de uma semana (relatório da semana em PDF). ?offset=0 atual, -1 passada…
+app.get('/api/semana/:token', async (req, res) => {
+  try {
+    const { getSetting } = await import('./db.js');
+    const tok = await getSetting('planilha_token');
+    if (!tok || req.params.token !== tok) return res.sendStatus(401);
+    const { painelVistorias } = await import('./visitas.js');
+    res.json(await painelVistorias(Math.max(-52, Math.min(0, Number(req.query.offset) || 0))));
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
 // Planilha Google de idas: o Apps Script lê daqui (token próprio, gerado pelo !planilha)
 app.get('/api/idas/:token', async (req, res) => {
   try {
