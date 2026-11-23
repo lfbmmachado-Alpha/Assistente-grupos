@@ -24,6 +24,16 @@ const ID_PLANILHA = '';
 // ou um link direto da imagem (https://…png). Vazio: o relatório sai com o nome por extenso.
 const LOGO = '';
 
+// Liderança direta de cada responsável (aparece no relatório em PDF). Ajuste aqui quando mudar.
+const LIDERANCA = {
+  Leandro: 'Janaina',
+  Samuel: 'Janaina',
+  Carlos: 'Kesse',
+  Kesse: 'Ederson',
+  Nathan: 'Ederson',
+  Janaina: 'Ederson',
+};
+
 function planilha() {
   return ID_PLANILHA ? SpreadsheetApp.openById(ID_PLANILHA) : SpreadsheetApp.getActive();
 }
@@ -601,7 +611,7 @@ function gerarRelatorioPDF() {
   const dados = sh.getRange(2, 1, Math.max(sh.getLastRow() - 1, 1), COL_OBS).getValues()
     .filter((l) => l[0] && l[5] === esc.condo && l[1] instanceof Date && l[1] >= de && l[1] <= ate)
     .sort((a, b) => (a[1] - b[1]) || String(a[10]).localeCompare(String(b[10])));
-  const html = montarRelatorioHTML(esc.condo, de, ate, dados);
+  const html = montarRelatorioHTML(esc.condo, de, ate, dados, equipeDoCondominio(ss, esc.condo, dados));
   const nome = 'Relatório de visitas - ' + esc.condo + ' - ' + fmtData(de).replace(/\//g, '-') + ' a ' + fmtData(ate).replace(/\//g, '-') + '.pdf';
   const pdf = Utilities.newBlob(html, 'text/html', 'relatorio.html').getAs('application/pdf').setName(nome);
   const pasta = pastaRelatorios();
@@ -610,8 +620,9 @@ function gerarRelatorioPDF() {
     '<div style="font-family:Arial,sans-serif;padding:8px 4px">' +
     '<p style="margin:0 0 6px;color:#1f2a44;font-size:14px"><b>Relatório gerado</b></p>' +
     '<p style="margin:0 0 14px;color:#7a869a;font-size:12px">' + escapar(nome) + '<br>Salvo na pasta <b>' + escapar(pasta.getName()) + '</b> do seu Google Drive.</p>' +
+    (avisoLogo ? '<p style="margin:0 0 12px;color:#c62828;font-size:12px">⚠️ ' + escapar(avisoLogo) + '</p>' : '') +
     '<a href="' + arq.getUrl() + '" target="_blank" style="display:inline-block;background:#1f3864;color:#fff;padding:9px 16px;border-radius:6px;text-decoration:none;font-size:13px">Abrir PDF</a>' +
-    '</div>').setWidth(380).setHeight(170);
+    '</div>').setWidth(400).setHeight(avisoLogo ? 230 : 170);
   SpreadsheetApp.getUi().showModalDialog(ui, 'Alpha');
 }
 
@@ -640,24 +651,47 @@ function pastaRelatorios() {
 function fmtData(d) { return Utilities.formatDate(d, 'America/Sao_Paulo', 'dd/MM/yyyy'); }
 function escapar(t) { return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
+let avisoLogo = '';
 function logoBase64() {
+  avisoLogo = '';
   if (!LOGO) return '';
   try {
     // aceita o link do Drive inteiro (…/file/d/ID/view…), só o ID, ou um link direto de imagem
     const id = (LOGO.match(/\/d\/([\w-]{20,})/) || LOGO.match(/[?&]id=([\w-]{20,})/) || [])[1] || (/^[\w-]{20,}$/.test(LOGO) ? LOGO : '');
-    const blob = id ? DriveApp.getFileById(id).getBlob() : UrlFetchApp.fetch(LOGO).getBlob();
+    let blob = id ? DriveApp.getFileById(id).getBlob() : UrlFetchApp.fetch(LOGO).getBlob();
+    const tipo = String(blob.getContentType() || '');
+    if (!/^image\/(png|jpe?g|gif)$/i.test(tipo)) {
+      // SVG, WEBP, PDF etc. não aparecem no PDF: tenta converter para PNG
+      try { blob = blob.getAs('image/png'); } catch (e) {
+        avisoLogo = 'A logo está em formato ' + tipo + ', que não aparece no PDF. Use um arquivo PNG ou JPG.';
+        return '';
+      }
+    }
     return 'data:' + blob.getContentType() + ';base64,' + Utilities.base64Encode(blob.getBytes());
-  } catch (e) { return ''; }
+  } catch (e) {
+    avisoLogo = 'Não consegui ler a logo: ' + e.message + '. Confira o link na linha LOGO do script.';
+    return '';
+  }
 }
 
-function montarRelatorioHTML(condo, de, ate, dados) {
+function equipeDoCondominio(ss, condo, dados) {
+  const sh = ss.getSheetByName(ABA);
+  const todas = sh.getRange(2, 1, Math.max(sh.getLastRow() - 1, 1), 8).getValues().filter((l) => l[5] === condo);
+  const resp = (dados.find((l) => l[6]) || todas.find((l) => l[6]) || [])[6] || '';
+  const chave = Object.keys(LIDERANCA).find((k) => k.toLowerCase() === String(resp).toLowerCase());
+  const lider = chave ? LIDERANCA[chave] : '';
+  const foram = Array.from(new Set(dados.map((l) => l[7]).filter(String))).filter((p) => p !== resp);
+  return { resp: resp, lider: lider, foram: foram };
+}
+
+function montarRelatorioHTML(condo, de, ate, dados, equipe) {
+  equipe = equipe || { resp: '', lider: '', foram: [] };
   const azul = '#1f3864', suave = '#6b778c', linha = '#dfe5ee';
   const vist = dados.filter((l) => l[8] === 'Vistoria da semana').length;
   const extras = dados.length - vist;
   let minutos = 0;
   dados.forEach((l) => { const m = String(l[13] || '').match(/^(\d+):(\d{2})$/); if (m) minutos += Number(m[1]) * 60 + Number(m[2]); });
   const tempo = Math.floor(minutos / 60) + 'h' + String(minutos % 60).padStart(2, '0');
-  const pessoas = Array.from(new Set(dados.map((l) => l[7]).filter(String)));
   // por mês
   const meses = {};
   dados.forEach((l) => { const k = Utilities.formatDate(l[1], 'America/Sao_Paulo', 'MM/yyyy'); meses[k] = meses[k] || [0, 0]; meses[k][l[8] === 'Vistoria da semana' ? 0 : 1]++; });
@@ -698,8 +732,13 @@ function montarRelatorioHTML(condo, de, ate, dados) {
     '<div style="height:3px;background:' + azul + ';margin:12px 0 18px"></div>' +
     '<div style="font-size:9px;color:' + suave + ';letter-spacing:1px;font-weight:bold">CONDOMÍNIO</div>' +
     '<div style="font-size:22px;font-weight:bold;color:' + azul + ';margin:2px 0 4px">' + escapar(condo) + '</div>' +
-    '<div style="font-size:11px;color:' + suave + '">Período: <b style="color:#1f2a44">' + fmtData(de) + ' a ' + fmtData(ate) + '</b>' +
-      (pessoas.length ? '  ·  Equipe: ' + escapar(pessoas.join(', ')) : '') + '</div>' +
+    '<div style="font-size:11px;color:' + suave + '">Período: <b style="color:#1f2a44">' + fmtData(de) + ' a ' + fmtData(ate) + '</b></div>' +
+    // equipe: responsável, liderança direta e quem mais foi
+    '<table style="border-collapse:collapse;margin-top:12px;font-size:10px"><tr>' +
+      (equipe.resp ? '<td style="padding:6px 14px 6px 10px;border-left:3px solid ' + azul + ';background:#f3f6fb"><div style="font-size:8px;color:' + suave + ';font-weight:bold;letter-spacing:1px">RESPONSÁVEL</div><div style="font-size:12px;font-weight:bold;margin-top:2px">' + escapar(equipe.resp) + '</div></td><td style="width:10px"></td>' : '') +
+      (equipe.lider ? '<td style="padding:6px 14px 6px 10px;border-left:3px solid ' + azul + ';background:#f3f6fb"><div style="font-size:8px;color:' + suave + ';font-weight:bold;letter-spacing:1px">LIDERANÇA DIRETA</div><div style="font-size:12px;font-weight:bold;margin-top:2px">' + escapar(equipe.lider) + '</div></td><td style="width:10px"></td>' : '') +
+      (equipe.foram.length ? '<td style="padding:6px 14px 6px 10px;border-left:3px solid ' + linha + ';background:#f3f6fb"><div style="font-size:8px;color:' + suave + ';font-weight:bold;letter-spacing:1px">TAMBÉM ATENDERAM</div><div style="font-size:12px;margin-top:2px">' + escapar(equipe.foram.join(', ')) + '</div></td>' : '') +
+    '</tr></table>' +
     '<table style="width:100%;border-collapse:collapse;margin:18px -6px 6px"><tr>' +
       caixa('VISTORIAS', vist, '#2e7d32') + caixa('IDAS EXTRAS', extras, '#ef6c00') + caixa('TOTAL DE IDAS', dados.length, azul) + caixa('TEMPO NO CONDOMÍNIO', tempo, azul) +
     '</tr></table>' +
