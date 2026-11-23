@@ -26,6 +26,7 @@ function planilha() {
 
 const ABA = 'Idas';
 const ABA_RESUMO = 'Resumo';
+const ABA_LISTAS = '_Listas'; // lista de condomínios para os menus de escolha (aba oculta)
 const ABA_ASSEMBLEIA = 'Assembleia';
 const ABA_LEITURAS = 'Leituras';
 const CAB = ['ID', 'Data', 'Dia', 'Semana (início)', 'Mês', 'Condomínio', 'Responsável (quadro)', 'Quem foi',
@@ -113,7 +114,8 @@ function atualizarIdas() {
   sh.getRange('A1').setNote('Atualizado em ' + quando);
 
   if (dados.leituras) escreverLeituras(ss, dados.leituras);
-  if (!ss.getSheetByName(ABA_RESUMO)) criarResumo(ss);
+  escreverListas(ss, linhas.map((l) => l[5]));
+  escreverPainel(ss, dados.painel || {}, quando);
   if (!ss.getSheetByName(ABA_ASSEMBLEIA)) criarAssembleia(ss);
   ss.getSheetByName(ABA_ASSEMBLEIA).getRange('H2').setValue('Atualizado em ' + quando);
 }
@@ -154,27 +156,143 @@ function layoutIdas(sh, n, primeiraVez) {
   ]);
 }
 
-// ---------------------------------------------------------------- aba Resumo
-function criarResumo(ss) {
-  const r = ss.insertSheet(ABA_RESUMO);
-  r.getRange('A1').setValue('Resumo por condomínio').setFontSize(14).setFontWeight('bold').setFontColor(AZUL);
-  r.getRange('A2').setValue('Total de idas registradas desde o início. Para um período, use a aba Assembleia.').setFontColor('#666666');
-  r.getRange('A4:F4').setValues([['Condomínio', 'Responsável', 'Vistorias', 'Idas extras', 'Total de idas', 'Última ida']])
+// ---------------------------------------------------------------- lista de condomínios (aba oculta)
+function escreverListas(ss, nomes) {
+  let l = ss.getSheetByName(ABA_LISTAS);
+  if (!l) { l = ss.insertSheet(ABA_LISTAS); l.hideSheet(); }
+  const unicos = Array.from(new Set(nomes.filter(String))).sort((a, b) => a.localeCompare(b));
+  l.clearContents();
+  l.getRange(1, 1).setValue('Condomínios');
+  if (unicos.length) l.getRange(2, 1, unicos.length, 1).setValues(unicos.map((n) => [n]));
+}
+
+// ---------------------------------------------------------------- aba Resumo (painel)
+// Refeita a cada atualização. Só o filtro de condomínio (e o período) que você escolheu é mantido.
+function escreverPainel(ss, P, quando) {
+  let r = ss.getSheetByName(ABA_RESUMO);
+  if (!r) r = ss.insertSheet(ABA_RESUMO, 0);
+  // guarda a escolha do filtro (linha marcada com "Condomínio:" na coluna A)
+  let filtro = { condo: '', de: '', ate: '' };
+  const usados = r.getLastRow();
+  if (usados) {
+    const colA = r.getRange(1, 1, usados, 1).getValues();
+    for (let i = 0; i < colA.length; i++) {
+      if (colA[i][0] === 'Condomínio:') {
+        filtro = { condo: r.getRange(i + 1, 2).getValue(), de: r.getRange(i + 2, 2).getValue(), ate: r.getRange(i + 3, 2).getValue() };
+        break;
+      }
+    }
+  }
+  r.getRange(1, 1, r.getMaxRows(), r.getMaxColumns()).breakApart();
+  r.clear();
+  r.clearConditionalFormatRules();
+  r.getRange(1, 1, r.getMaxRows(), r.getMaxColumns()).clearDataValidations();
+  r.setHiddenGridlines(true);
+  [170, 75, 75, 65, 120, 90, 220, 220].forEach((w, i) => r.setColumnWidth(i + 1, w));
+
+  r.getRange('A1:H1').merge().setValue('PAINEL — ALPHA ADMINISTRADORA').setFontSize(16).setFontWeight('bold')
+    .setFontColor('#ffffff').setBackground(AZUL).setHorizontalAlignment('center').setVerticalAlignment('middle');
+  r.setRowHeight(1, 42);
+  r.getRange('A2:H2').merge().setValue('Atualizado em ' + quando + ' · atualiza sozinho a cada 10 minutos')
+    .setFontColor('#999999').setFontSize(9).setHorizontalAlignment('right');
+
+  const V = P.vistorias || { total: 0, feitas: 0, idas: 0, pessoas: [], semana: '' };
+  const L = P.leituras || { total: 0, feitas: 0, pessoas: [], mes: '' };
+  const atrasadas = (L.pessoas || []).reduce((t, p) => t + p.atrasadas.length, 0);
+  const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+
+  // cartões
+  const cartao = (col, titulo, valor, sub, cor) => {
+    r.getRange(4, col, 1, 2).merge().setValue(titulo).setFontSize(9).setFontColor('#666666');
+    r.getRange(5, col, 1, 2).merge().setValue(valor).setFontSize(22).setFontWeight('bold').setFontColor(cor);
+    r.getRange(6, col, 1, 2).merge().setValue(sub).setFontSize(9).setFontColor('#666666');
+    r.getRange(4, col, 3, 2).setBackground(AZUL_CLARO).setHorizontalAlignment('center').setVerticalAlignment('middle');
+  };
+  cartao(1, 'VISTORIAS DA SEMANA', V.feitas + ' de ' + V.total, pct(V.feitas, V.total) + '% · ' + V.semana, AZUL);
+  cartao(3, 'IDAS NA SEMANA', String(V.idas || 0), 'vistorias + idas extras', AZUL);
+  cartao(5, 'LEITURAS DO MÊS', L.feitas + ' de ' + L.total, pct(L.feitas, L.total) + '% · ' + L.mes, AZUL);
+  cartao(7, 'LEITURAS ATRASADAS', String(atrasadas), atrasadas ? 'precisam de atenção' : 'nenhuma 🎉', atrasadas ? '#990000' : '#2e6b1f');
+  r.setRowHeight(5, 40);
+
+  let lin = 8;
+  const barra = (a, b) => { const n = b ? Math.round((a / b) * 10) : 0; return '▓'.repeat(n) + '░'.repeat(10 - n); };
+  const corPct = (p) => (p >= 80 ? VERDE : p >= 50 ? '#fff2cc' : '#f4cccc');
+  const secao = (titulo) => {
+    r.getRange(lin, 1, 1, 8).merge().setValue(titulo).setFontWeight('bold').setFontColor(AZUL).setFontSize(12)
+      .setBorder(false, false, true, false, false, false, AZUL, SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
+    r.setRowHeight(lin, 30);
+    lin++;
+  };
+  const cabecalho = (cols) => {
+    r.getRange(lin, 1, 1, 8).setValues([cols]).setFontWeight('bold').setBackground(AZUL).setFontColor('#ffffff').setHorizontalAlignment('center');
+    lin++;
+  };
+
+  // vistorias por colaborador
+  secao('VISTORIAS DA SEMANA — ' + V.semana);
+  cabecalho(['Colaborador', 'Feitas', 'Total', '%', 'Progresso', 'Idas extras', 'Pendentes', '']);
+  r.getRange(lin - 1, 7, 1, 2).merge();
+  (V.pessoas || []).forEach((p) => {
+    const pc = pct(p.feitas, p.total);
+    r.getRange(lin, 1, 1, 7).setValues([[p.nome, p.feitas, p.total, pc + '%', barra(p.feitas, p.total), p.extras, p.pendentes.join(' · ') || '—']]);
+    r.getRange(lin, 7, 1, 2).merge().setWrap(true).setFontSize(9).setVerticalAlignment('top');
+    r.getRange(lin, 4).setBackground(corPct(pc));
+    lin++;
+  });
+  r.getRange(lin, 1, 1, 6).setValues([['TOTAL', V.feitas, V.total, pct(V.feitas, V.total) + '%', barra(V.feitas, V.total), '']])
+    .setFontWeight('bold').setBackground(CINZA);
+  lin += 2;
+
+  // leituras por responsável
+  secao('LEITURAS DO MÊS — ' + L.mes);
+  cabecalho(['Responsável', 'Feitas', 'Total', '%', 'Progresso', 'Atrasadas', 'Nesta semana', 'Depois']);
+  (L.pessoas || []).forEach((p) => {
+    const pc = pct(p.feitas, p.total);
+    r.getRange(lin, 1, 1, 8).setValues([[p.nome, p.feitas, p.total, pc + '%', barra(p.feitas, p.total),
+      p.atrasadas.length ? p.atrasadas.join(' · ') : '—', p.semana.join(' · ') || '—', p.depois.join(' · ') || '—']]);
+    r.getRange(lin, 6, 1, 3).setWrap(true).setFontSize(9).setVerticalAlignment('top');
+    if (p.atrasadas.length) r.getRange(lin, 6).setFontColor('#990000').setFontWeight('bold');
+    r.getRange(lin, 4).setBackground(corPct(pc));
+    lin++;
+  });
+  r.getRange(lin, 1, 1, 5).setValues([['TOTAL', L.feitas, L.total, pct(L.feitas, L.total) + '%', barra(L.feitas, L.total)]])
+    .setFontWeight('bold').setBackground(CINZA);
+  lin += 2;
+
+  // idas por condomínio (filtro)
+  secao('IDAS POR CONDOMÍNIO');
+  const f0 = lin;
+  r.getRange(lin, 1, 3, 1).setValues([['Condomínio:'], ['De:'], ['Até:']]).setFontWeight('bold').setHorizontalAlignment('right');
+  r.getRange(lin, 2, 1, 4).merge();
+  r.getRange(lin + 1, 2, 1, 2).merge();
+  r.getRange(lin + 2, 2, 1, 2).merge();
+  const hoje = new Date();
+  r.getRange(lin, 2).setValue(filtro.condo || ss.getSheetByName(ABA_LISTAS).getRange('A2').getValue() || '');
+  r.getRange(lin + 1, 2).setValue(filtro.de || new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1)).setNumberFormat('dd/mm/yyyy');
+  r.getRange(lin + 2, 2).setValue(filtro.ate || new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate())).setNumberFormat('dd/mm/yyyy');
+  r.getRange(lin, 2, 3, 4).setBackground('#fff2cc').setFontWeight('bold')
+    .setBorder(true, true, true, true, true, true, '#d6b656', SpreadsheetApp.BorderStyle.SOLID);
+  r.getRange(lin, 2).setDataValidation(SpreadsheetApp.newDataValidation()
+    .requireValueInRange(ss.getSheetByName(ABA_LISTAS).getRange('A2:A'), true).setAllowInvalid(false).build());
+  r.getRange(lin + 1, 2, 2, 1).setDataValidation(SpreadsheetApp.newDataValidation().requireDate().setAllowInvalid(false).build());
+  r.getRange(lin, 7).setValue('◀ escolha o condomínio e o período').setFontColor('#999999').setFontStyle('italic');
+  const C = '$B$' + f0, D = '$B$' + (f0 + 1), A = '$B$' + (f0 + 2);
+  lin += 4;
+  r.getRange(lin, 1, 1, 8).setValues([['Data', 'Dia', 'Quem foi', 'Tipo', 'Motivo / causa', 'Entrada', 'Saída', 'Duração']])
     .setFontWeight('bold').setBackground(AZUL).setFontColor('#ffffff').setHorizontalAlignment('center');
-  formula(r.getRange('A5'), '=IFERROR(SORT(UNIQUE(FILTER({' + ABA + '!F2:F, ' + ABA + '!G2:G}, ' + ABA + '!F2:F<>""))), )');
-  formula(r.getRange('C5'), '=ARRAYFORMULA(IF(A5:A="", , COUNTIFS(' + ABA + '!F2:F, A5:A, ' + ABA + '!I2:I, "Vistoria da semana")))');
-  formula(r.getRange('D5'), '=ARRAYFORMULA(IF(A5:A="", , COUNTIFS(' + ABA + '!F2:F, A5:A, ' + ABA + '!I2:I, "Ida extra")))');
-  formula(r.getRange('E5'), '=ARRAYFORMULA(IF(A5:A="", , C5:C + D5:D))');
-  // a aba Idas fica ordenada da mais recente para a mais antiga: a 1ª ocorrência é a última ida
-  formula(r.getRange('F5'), '=ARRAYFORMULA(IF(A5:A="", , IFERROR(VLOOKUP(A5:A, {' + ABA + '!F2:F, ' + ABA + '!B2:B}, 2, FALSE))))');
-  r.getRange('F5:F').setNumberFormat('dd/mm/yyyy');
-  r.getRange('C5:F').setHorizontalAlignment('center');
-  r.getRange('A5:A').setFontWeight('bold');
-  [220, 130, 90, 100, 110, 110].forEach((w, i) => r.setColumnWidth(i + 1, w));
-  r.setFrozenRows(4);
+  lin++;
+  const col = (c) => ABA + '!' + c + '2:' + c;
+  formula(r.getRange(lin, 1), '=IF(' + C + '="", "Escolha o condomínio", IFERROR(SORT(FILTER({' +
+    ['B', 'C', 'H', 'I', 'J', 'K', 'L', 'N'].map(col).join(', ') + '}, ' +
+    col('F') + '=' + C + ', ' + col('B') + '>=' + D + ', ' + col('B') + '<=' + A + '), 1, FALSE), "Nenhuma ida no período."))');
+  r.getRange(lin, 1, 300, 1).setNumberFormat('dd/mm/yyyy');
+  r.getRange(lin, 1, 300, 8).setHorizontalAlignment('center').setFontSize(10);
+  r.getRange(lin, 5, 300, 1).setHorizontalAlignment('left');
   r.setConditionalFormatRules([
-    SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=AND($A5<>"",ISEVEN(ROW()))').setBackground(CINZA).setRanges([r.getRange('A5:F')]).build(),
+    SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('Vistoria da semana').setBackground(VERDE).setFontColor('#2e6b1f').setRanges([r.getRange(lin, 4, 300, 1)]).build(),
+    SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('Ida extra').setBackground(LARANJA).setFontColor('#9c4a0f').setRanges([r.getRange(lin, 4, 300, 1)]).build(),
   ]);
+  r.setFrozenRows(2);
 }
 
 // ---------------------------------------------------------------- aba Assembleia
@@ -200,7 +318,7 @@ function criarAssembleia(ss) {
   a.getRange('B4:E6').setBackground('#fff2cc').setFontWeight('bold').setHorizontalAlignment('left')
     .setBorder(true, true, true, true, true, true, '#d6b656', SpreadsheetApp.BorderStyle.SOLID);
   a.getRange('B4').setDataValidation(SpreadsheetApp.newDataValidation()
-    .requireValueInRange(ss.getSheetByName(ABA_RESUMO).getRange('A5:A'), true).setAllowInvalid(false).build());
+    .requireValueInRange(ss.getSheetByName(ABA_LISTAS).getRange('A2:A'), true).setAllowInvalid(false).build());
   a.getRange('B5:B6').setDataValidation(SpreadsheetApp.newDataValidation().requireDate().setAllowInvalid(false).build());
   a.getRange('G4:I4').merge().setValue('◀ escolha o condomínio e o período').setFontColor('#999999').setFontStyle('italic');
 
@@ -236,7 +354,7 @@ function criarAssembleia(ss) {
   ]);
   // primeiro condomínio da lista já selecionado, para não abrir vazio
   SpreadsheetApp.flush();
-  const primeiro = String(ss.getSheetByName(ABA_RESUMO).getRange('A5').getDisplayValue() || '');
+  const primeiro = String(ss.getSheetByName(ABA_LISTAS).getRange('A2').getDisplayValue() || '');
   if (primeiro && primeiro.charAt(0) !== '#') a.getRange('B4').setValue(primeiro);
   try { a.activate(); } catch (e) {}
 }

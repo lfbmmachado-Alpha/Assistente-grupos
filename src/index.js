@@ -35,7 +35,13 @@ app.get('/api/idas/:token', async (req, res) => {
     if (!tok || req.params.token !== tok) return res.sendStatus(401);
     const { planilhaIdas } = await import('./visitas.js');
     const { planilhaLeituras } = await import('./leituras.js');
-    res.json({ atualizado: new Date().toISOString(), idas: await planilhaIdas(), leituras: await planilhaLeituras().catch(() => null) });
+    const { painelLeituras } = await import('./leituras.js');
+    const { painelVistorias } = await import('./visitas.js');
+    const painel = {
+      vistorias: await painelVistorias().catch((e) => { console.error('[painel]', e.message); return null; }),
+      leituras: await painelLeituras().catch((e) => { console.error('[painel]', e.message); return null; }),
+    };
+    res.json({ atualizado: new Date().toISOString(), idas: await planilhaIdas(), leituras: await planilhaLeituras().catch(() => null), painel });
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 

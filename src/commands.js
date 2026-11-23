@@ -656,7 +656,7 @@ export async function handleCommand(msg, suggestionGroup) {
         '!leituras grupo Carlos = COND. CARLOS — onde avisar cada responsável\n!leituras grupos — ver configuração\n!leituras responsaveis — quem cuida de cada condomínio\n!leituras responsavel Antares = Carlos — troca um\n' +
         '!leituras enviar [semana|dia] [Líder] — manda os avisos agora\n!leituras importar + lista colada abaixo\n' +
         '!leitura feita Nome dd/mm (Quem)\n!leituras apelido nome da lista = nome do controle\n' +
-        '!leituras incluir Nome = Líder · !leituras remover Nome\n!leituras horario semana 07:30 · !leituras horario dia 17:30';
+        '!leituras antecipar Leste [próxima semana] — puxa uma leitura para a semana\n!leituras incluir Nome = Líder · !leituras remover Nome\n!leituras horario semana 07:30 · !leituras horario dia 17:30';
 
       if (cmd === 'leitura' && sub === 'feita') {
         const m = primeira.match(/feita\s+(.+?)\s+(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)\s*(?:\((.+)\))?\s*$/i);
@@ -746,6 +746,15 @@ export async function handleCommand(msg, suggestionGroup) {
       if (sub === 'remover' || sub === 'tirar') {
         const c = await L.removerCondominio(resto1);
         await reply(c ? `➖ *${c.nome}* saiu do controle de leituras.` : `Não achei "${resto1}" no controle.`);
+        return true;
+      }
+      if (sub === 'antecipar') {
+        const prox = /pr[oó]xima/i.test(resto1);
+        const nome = resto1.replace(/pr[oó]xima( semana)?|esta semana|semana/gi, '').trim();
+        const sem = prox ? L.proximaSegunda() : L.semanaDe(L.hojeBR()).ini;
+        const c = nome ? await L.antecipar(nome, sem) : null;
+        await reply(c ? `✅ *${c.nome}* entra nas leituras da semana de ${sem.slice(8, 10)}/${sem.slice(5, 7)}. Para avisar agora: !enviar leituras (responsável) semana`
+          : 'Use: !leituras antecipar Leste  (ou: !leituras antecipar Leste próxima semana)');
         return true;
       }
       if (sub === 'horario') {

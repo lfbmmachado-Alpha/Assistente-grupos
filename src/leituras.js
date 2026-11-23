@@ -36,6 +36,16 @@ function proximoMes(s) {
 }
 
 // ---------- tabelas ----------
+export async function antecipar(nome, semanaIni) {
+  const c = await acharCondominio(nome);
+  if (!c) return null;
+  let a = {};
+  try { a = JSON.parse(await getSetting('leituras_antecipar', '{}')); } catch {}
+  a[c.chave] = semanaIni;
+  await setSetting('leituras_antecipar', JSON.stringify(a));
+  return c;
+}
+
 export async function initLeituras() {
   await q(`CREATE TABLE IF NOT EXISTS leituras_cad (
     chave TEXT PRIMARY KEY, nome TEXT NOT NULL, lider TEXT, ativo BOOLEAN DEFAULT TRUE)`);
@@ -51,6 +61,11 @@ export async function initLeituras() {
       await q(`INSERT INTO leituras (chave, data, origem) VALUES ($1,$2,'planilha') ON CONFLICT DO NOTHING`, [normalize(nome), data]);
     }
     console.log(`[leituras] cadastro carregado: ${LEITURAS_CADASTRO.length} condomínios, ${LEITURAS_HISTORICO.length} leituras`);
+  }
+  // pedido do Luiz (23/11/2026): Leste entra já na semana de 23/11 (uma vez só)
+  if (!(await getSetting('leituras_seed_leste'))) {
+    await setSetting('leituras_seed_leste', '1');
+    if (hojeBR() <= '2026-11-29') await antecipar('Leste', '2026-11-23').catch(() => {});
   }
 }
 
@@ -156,6 +171,9 @@ export async function situacao(ref = hojeBR()) {
   for (const l of leit) porCondo.set(l.chave, [...(porCondo.get(l.chave) || []), l]);
   // Responsável pela leitura = o do CONDOMÍNIO: definido à mão (!leituras responsavel) ou o do quadro de vistorias
   const resp = await responsaveis(cad);
+  // leituras antecipadas à mão para uma semana (!leituras antecipar Leste): { chave: 'AAAA-MM-DD' (segunda da semana) }
+  let antecipar = {};
+  try { antecipar = JSON.parse(await getSetting('leituras_antecipar', '{}')); } catch {}
   const itens = [];
   for (const c of cad) {
     const hist = porCondo.get(c.chave) || [];
@@ -169,6 +187,7 @@ export async function situacao(ref = hojeBR()) {
     else if (alvo < ini) estado = 'atrasada';
     else if (alvo <= fim) estado = 'semana'; // vale a semana inteira (seg–sex), não o dia
     else estado = 'futura';
+    if (estado === 'futura' && antecipar[c.chave] === ini) estado = 'semana';
     // quem faz a leitura deste condomínio: quem fez a desta semana, senão quem fez a última (lista do grupo de controle)
     const executor = (feitaSemana?.quem) || [...hist].reverse().find((l) => l.quem)?.quem || null;
     itens.push({ ...c, ultima: base?.data || null, alvo, estado, feita: feitaSemana || null, executor, responsavel: resp.get(c.chave) || executor || null });
@@ -414,4 +433,32 @@ export async function planilhaLeituras() {
       meses: meses.map((m) => (porCondo.get(i.chave) || {})[m] || ''),
     }));
   return { meses: meses.map((m) => `${m.slice(5, 7)}/${m.slice(0, 4)}`), linhas };
+}
+
+// ---------- painel da planilha: leituras do MÊS (geral e por responsável) ----------
+export async function painelLeituras() {
+  const hoje = hojeBR();
+  const mes = hoje.slice(0, 7);
+  const s = await situacao(hoje);
+  const leit = (await q(`SELECT chave, data::text AS data FROM leituras WHERE to_char(data, 'YYYY-MM') = $1`, [mes])).rows;
+  const feitasMes = new Map(leit.map((l) => [l.chave, l.data]));
+  const pessoas = new Map();
+  for (const i of s.itens) {
+    const feita = feitasMes.get(i.chave);
+    // conta no mês: já feita neste mês, ou com data prevista até o fim do mês
+    const prevista = i.feita ? i.feita.data : i.alvo;
+    if (!feita && !(prevista && prevista.slice(0, 7) <= mes)) continue;
+    const p = i.responsavel || 'Sem responsável';
+    const x = pessoas.get(p) || { nome: p, total: 0, feitas: 0, atrasadas: [], semana: [], depois: [] };
+    x.total++;
+    if (feita) x.feitas++;
+    else if (i.estado === 'atrasada') x.atrasadas.push(titulo(i.nome));
+    else if (i.estado === 'semana') x.semana.push(titulo(i.nome));
+    else x.depois.push(titulo(i.nome));
+    pessoas.set(p, x);
+  }
+  const lista = [...pessoas.values()].sort((a, b) => a.nome.localeCompare(b.nome));
+  const total = lista.reduce((t, x) => t + x.total, 0);
+  const feitas = lista.reduce((t, x) => t + x.feitas, 0);
+  return { mes: `${mes.slice(5, 7)}/${mes.slice(0, 4)}`, total, feitas, pessoas: lista };
 }

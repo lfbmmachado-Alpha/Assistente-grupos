@@ -1149,3 +1149,25 @@ export async function planilhaIdas() {
     };
   });
 }
+
+// ---------- painel da planilha: vistorias da semana (geral e por vistoriador) ----------
+export async function painelVistorias(offset = 0) {
+  const { inicio, fim } = semana(offset);
+  const { itens, vistoriadores } = await universo();
+  const vis = await visitasNoPeriodo(inicio, fim);
+  const feitos = new Set(vis.filter((v) => v.tipo === 'ordinaria').map((v) => v.condo_key));
+  const extras = vis.filter((v) => v.tipo !== 'ordinaria');
+  const pessoas = vistoriadores.map((nome) => {
+    const meus = itens.filter((i) => i.vistoriador === nome);
+    const ok = meus.filter((i) => i.condo_key && feitos.has(i.condo_key));
+    const pend = meus.filter((i) => !(i.condo_key && feitos.has(i.condo_key)));
+    const keys = new Set(meus.map((i) => i.condo_key).filter(Boolean));
+    return { nome, total: meus.length, feitas: ok.length, extras: extras.filter((v) => keys.has(v.condo_key)).length,
+      pendentes: pend.map((i) => i.nome + (i.temGrupo ? '' : ' (sem grupo)')) };
+  });
+  const ultimo = new Date(fim.getTime() - 86400000);
+  return {
+    semana: `${dataCurta(inicio)} a ${dataCurta(ultimo)}`,
+    total: itens.length, feitas: pessoas.reduce((t, p) => t + p.feitas, 0), idas: vis.length, pessoas,
+  };
+}
