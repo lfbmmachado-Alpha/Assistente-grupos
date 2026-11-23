@@ -38,6 +38,7 @@ export async function initVisitas() {
   }
   await ajustarOrdinarias();
   await consolidarDuplicadas().catch((e) => console.error('[visita] consolidar', e.message));
+  await recalcularSaidasEstimadas().catch((e) => console.error('[visita] saídas', e.message));
 }
 
 // Semana sem ordinária mas com alguma ida → a primeira ida da semana passa a contar como a visita da semana
@@ -288,30 +289,53 @@ async function definirTipo(condoKey, tipoIA, ts, texto = '') {
 
 // Quando o vistoriador aparece em outro condomínio, a visita aberta no anterior é encerrada:
 // saída = última mensagem dele lá (se houver depois da entrada) ou a chegada no próximo, marcada como estimada.
+// Regra da saída sem aviso: 10 minutos depois da última mensagem do vistoriador no condomínio
+// (nunca depois da chegada dele no condomínio seguinte).
+const MIN_APOS_ULTIMA = 10;
+function saidaEstimada(v, limite = null) {
+  const base = new Date(v.ultima_atividade && new Date(v.ultima_atividade) > new Date(v.entrada) ? v.ultima_atividade : v.entrada);
+  let fim = new Date(base.getTime() + MIN_APOS_ULTIMA * 60000);
+  if (limite && fim > new Date(limite)) fim = new Date(limite);
+  return fim;
+}
+
 async function fecharAnteriores(vistoriador, condoKey, ts) {
   const abertas = (await q(
     `SELECT * FROM visitas WHERE vistoriador = $1 AND condo_key <> $2 AND saida IS NULL AND entrada IS NOT NULL
        AND entrada < $3 AND entrada > $3::timestamptz - interval '14 hours'`, [vistoriador, condoKey, ts]
   )).rows;
   for (const v of abertas) {
-    const fim = v.ultima_atividade && new Date(v.ultima_atividade) > new Date(v.entrada) ? v.ultima_atividade : ts;
+    const fim = saidaEstimada(v, ts);
     await q(`UPDATE visitas SET saida = $2, saida_estimada = TRUE WHERE id = $1`, [v.id, fim]);
     console.log(`[visita] SAÍDA estimada ${vistoriador} de ${v.condo_nome} ${hora(fim)} (chegou em outro condomínio)`);
   }
 }
 
-// Encerra no fim do dia as visitas que ficaram abertas (saída = última mensagem do vistoriador no local)
+// A cada 5 min: visita sem mensagem do vistoriador há 40 min fecha com saída = última mensagem + 10 min.
+// Se ele voltar a mandar mensagem dali a pouco, a visita reabre sozinha (visitaAberta).
 export async function fecharDia() {
   const abertas = (await q(
-    `SELECT * FROM visitas WHERE saida IS NULL AND entrada IS NOT NULL AND entrada < now() - interval '3 hours'
-       AND (entrada AT TIME ZONE 'America/Sao_Paulo')::date < (now() AT TIME ZONE 'America/Sao_Paulo')::date
-       OR (saida IS NULL AND entrada IS NOT NULL AND entrada < now() - interval '10 hours')`
+    `SELECT * FROM visitas WHERE saida IS NULL AND entrada IS NOT NULL AND origem <> 'lista'
+       AND COALESCE(GREATEST(ultima_atividade, entrada), entrada) < now() - interval '40 minutes'`
   )).rows;
   for (const v of abertas) {
-    if (v.ultima_atividade && new Date(v.ultima_atividade) > new Date(v.entrada)) {
-      await q(`UPDATE visitas SET saida = ultima_atividade, saida_estimada = TRUE WHERE id = $1`, [v.id]);
-    }
+    const prox = (await q(`SELECT MIN(entrada) AS e FROM visitas WHERE vistoriador = $1 AND entrada > $2 AND id <> $3`, [v.vistoriador, v.entrada, v.id])).rows[0]?.e;
+    const fim = saidaEstimada(v, prox);
+    await q(`UPDATE visitas SET saida = $2, saida_estimada = TRUE WHERE id = $1`, [v.id, fim]);
+    console.log(`[visita] SAÍDA estimada ${v.vistoriador} de ${v.condo_nome} ${hora(fim)} (10 min após a última mensagem)`);
   }
+}
+
+// Uma vez: recalcula as saídas estimadas antigas pela regra nova (última mensagem + 10 min)
+export async function recalcularSaidasEstimadas() {
+  if (await getSetting('saidas_10min_aplicado')) return;
+  const r = await q(`
+    UPDATE visitas v SET saida = LEAST(
+        GREATEST(COALESCE(v.ultima_atividade, v.entrada), v.entrada) + interval '10 minutes',
+        (SELECT MIN(x.entrada) FROM visitas x WHERE x.vistoriador = v.vistoriador AND x.entrada > v.entrada AND x.id <> v.id))
+    WHERE v.saida_estimada AND v.entrada IS NOT NULL AND v.origem <> 'lista'`);
+  await setSetting('saidas_10min_aplicado', '1');
+  console.log(`[visita] ${r.rowCount} saída(s) estimada(s) recalculada(s): última mensagem + 10 min`);
 }
 
 // Saída informada à mão: !saida ipe 11:30
