@@ -147,7 +147,17 @@ const PREFILTRO = /(cheg|estou n|estamos n|t[oô] n[oa]|presente|no local|aqui n
 
 // Prova de que a pessoa ESTÁ ou ESTEVE no condomínio. Sem isso (e sem foto/vídeo), mensagem de texto não vira ida:
 // avisar, responder, cobrar ou combinar pelo grupo não é ir ao condomínio.
-export const PRESENCA = /(cheguei|chegamos|chegando a[ií]|estou aqui|estamos aqui|t[oô] aqui|aqui n[oa] (condom|pr[eé]dio|edif|port|garag|local)|(estou|estamos|t[oô]) n[oa] (condom|pr[eé]dio|edif|local|hall|t[eé]rreo|subsolo|telhado|sal[aã]o|playground|portaria|garagem|guarita|cobertura|piscina|casa de|[aá]rea)|presente|no local|in loco|estive|estivemos|passei (a[ií]|aqui|hoje|n[oa] |pel[oa])|fui (a[ií]|hoje|n[oa] |ao |at[eé])|fomos (a[ií]|hoje|n[oa] |ao )|vistoria (realizada|feita|conclu|finaliz|em andamento|ok)|realizei|realizamos|fiz a (vistoria|visita|leitura|entrega|ronda)|finaliz|encerr|sa[ií]ndo|deixei|entreguei|retirei|levei|acompanhei|acompanhando|verifiquei|constatei|conferi |segue[m]? (a |as |o |os )?(fotos?|imagens?|v[ií]deos?|registros?)|seguem fotos|fotos? (da|do|de) (vistoria|visita))/i;
+// Presença FORTE: a pessoa diz com todas as letras que está/esteve no condomínio fazendo algo
+export const PRESENCA_FORTE = /(cheguei|chegamos|chegando a[ií]|estou aqui|estamos aqui|t[oô] aqui|aqui n[oa] (condom|pr[eé]dio|edif|port|garag|local)|(estou|estamos|t[oô]) n[oa] (condom|pr[eé]dio|edif|local|hall|t[eé]rreo|subsolo|telhado|sal[aã]o|playground|portaria|garagem|guarita|cobertura|piscina|casa de|[aá]rea)|no local|in loco|estive|estivemos|(estou|estamos) (realizando|fazendo) (a |uma )?(vistoria|visita|ronda|leitura)|realizando (a |uma )?(vistoria|visita|ronda)|em vistoria|vistoria (realizada|feita|conclu|finaliz|em andamento)|fiz a (vistoria|visita|leitura|entrega|ronda)|realizei a (vistoria|visita|leitura)|segue[m]? (a |as |o |os )?(fotos?|imagens?|v[ií]deos?|registros?)|seguem fotos|fotos? (da|do|de) (vistoria|visita)|sa[ií]ndo do (condom|pr[eé]dio|edif))/i;
+// Presença FRACA: providência no local ou item de checklist ("Extintores ok", "Limpeza sendo conferida")
+export const PRESENCA = new RegExp(PRESENCA_FORTE.source + '|' +
+  /(passei (a[ií]|aqui|hoje|n[oa] |pel[oa])|fui (a[ií]|hoje|n[oa] |ao |at[eé])|fomos (a[ií]|hoje|n[oa] |ao )|realizei|realizamos|finaliz|sa[ií]ndo|deixei|entreguei|retirei|levei|acompanhei|acompanhando|verifiquei|verificando|constatei|conferi |conferindo|sendo conferid|sendo verificad|\b(ok|conferid[oa]s?|verificad[oa]s?|funcionando|em ordem)\s*[.!✅👍]*$)/.source, 'i');
+// Comunicado aos moradores ("Prezados moradores… gostaria de informar…"): só conta com presença FORTE
+const COMUNICADO = /^\s*(\*?\s*)?(prezad[oa]s?|caros?|senhores|informamos|comunicado|aviso|ol[aá],? (moradores|cond[oô]minos|pessoal)|bom dia,? (moradores|cond[oô]minos|pessoal|prezad))|gostaria de (informar|comunicar|avisar)|vimos (por meio|informar)/i;
+export function temPresenca(texto) {
+  const t = String(texto || '');
+  return COMUNICADO.test(t) ? PRESENCA_FORTE.test(t) : PRESENCA.test(t);
+}
 
 // Aviso de visita/vistoria escrito por QUALQUER pessoa (a IA decide se é funcionário da Alpha)
 export const AVISO_VISITA = /(vistori|estou no condom|estamos no condom|cheguei (no|ao) (condom|pr[eé]dio|edif)|presente no (local|condom)|no local para|visita (t[eé]cnica|de rotina|semanal))/i;
@@ -354,7 +364,7 @@ async function processarVisitaAgora(chat, condoKey, msg) {
     `Mensagem: ${msg.text.slice(0, 1500)}`, { leve: true, tarefa: 'Vistorias (mensagens da equipe)' });
   let evento = r?.evento || 'nenhum';
   // trava: texto sem sinal de presença no local não vira ida (ex.: "Bom dia, amanhã passo aí", aviso, cobrança)
-  if (evento !== 'nenhum' && !PRESENCA.test(msg.text)) {
+  if (evento !== 'nenhum' && !temPresenca(msg.text)) {
     console.log(`[visita] ignorada (sem sinal de presença) ${vistoriador} em ${chat.condo_name || condoKey}: ${String(msg.text).slice(0, 80)}`);
     evento = 'nenhum';
   }
@@ -858,7 +868,7 @@ export async function verificarSemana(offset = 0, { aoProgresso } = {}) {
         const doDia = msgs.filter((m) => fmt(m.ts, { day: '2-digit', month: '2-digit' }) === String(v.data).slice(0, 5).padStart(5, '0'));
         const quem1 = normalize(v.quem || '').split(' ')[0];
         const prova = doDia.some((m) => (m.from_me || /alpha\s+(administradora|condom)/i.test(m.text || '') || (quem1 && normalize(m.author_name || '').includes(quem1))) &&
-          (PRESENCA.test(m.text || '') || /^\[(imagem|vídeo)\]/.test(String(m.text || '').trim())));
+          (temPresenca(m.text || '') || /^\[(imagem|vídeo)\]/.test(String(m.text || '').trim())));
         if (!prova) { console.log(`[verificar] ${it.nome} ${v.data}: sem prova de presença, não registrada`); continue; }
         const entrada = dataHoraBR(v.data, v.entrada);
         if (isNaN(entrada) || entrada < inicio || entrada >= fim) continue;
