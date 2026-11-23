@@ -327,8 +327,9 @@ export async function fecharDia() {
 }
 
 // Uma vez: recalcula as saídas estimadas antigas pela regra nova (última mensagem + 10 min)
-export async function recalcularSaidasEstimadas() {
-  if (await getSetting('saidas_10min_aplicado')) return;
+export async function recalcularSaidasEstimadas({ forcar = false } = {}) {
+  if (!forcar && (await getSetting('saidas_10min_aplicado'))) return 0;
+  await fecharDia(); // fecha também as abertas sem mensagem há 40 min
   const r = await q(`
     UPDATE visitas v SET saida = LEAST(
         GREATEST(COALESCE(v.ultima_atividade, v.entrada), v.entrada) + interval '10 minutes',
@@ -336,6 +337,7 @@ export async function recalcularSaidasEstimadas() {
     WHERE v.saida_estimada AND v.entrada IS NOT NULL AND v.origem <> 'lista'`);
   await setSetting('saidas_10min_aplicado', '1');
   console.log(`[visita] ${r.rowCount} saída(s) estimada(s) recalculada(s): última mensagem + 10 min`);
+  return r.rowCount;
 }
 
 // Saída informada à mão: !saida ipe 11:30
