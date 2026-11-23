@@ -168,131 +168,227 @@ function escreverListas(ss, nomes) {
 
 // ---------------------------------------------------------------- aba Resumo (painel)
 // Refeita a cada atualização. Só o filtro de condomínio (e o período) que você escolheu é mantido.
+const FUNDO = '#f1f4f9', BRANCO = '#ffffff', TEXTO = '#1f2a44', SUAVE = '#7a869a', LINHA = '#e3e8f0';
+const OK = '#2e7d32', ALERTA = '#f9a825', RUIM = '#c62828';
+// colunas do painel: A e J são margens
+const PC = { A: 1, NOME: 2, FEITAS: 3, TOTAL: 4, PCT: 5, BARRA: 6, EXTRA: 7, LISTA: 8, LISTA2: 9, J: 10 };
+const LARG_PAINEL = [28, 200, 80, 80, 70, 170, 110, 300, 300, 28];
+
 function escreverPainel(ss, P, quando) {
   let r = ss.getSheetByName(ABA_RESUMO);
   if (!r) r = ss.insertSheet(ABA_RESUMO, 0);
-  // guarda a escolha do filtro (linha marcada com "Condomínio:" na coluna A)
+  // guarda a escolha do filtro (linha marcada com "Condomínio" na coluna B)
   let filtro = { condo: '', de: '', ate: '' };
   const usados = r.getLastRow();
   if (usados) {
-    const colA = r.getRange(1, 1, usados, 1).getValues();
-    for (let i = 0; i < colA.length; i++) {
-      if (colA[i][0] === 'Condomínio:') {
-        filtro = { condo: r.getRange(i + 1, 2).getValue(), de: r.getRange(i + 2, 2).getValue(), ate: r.getRange(i + 3, 2).getValue() };
+    const colB = r.getRange(1, PC.NOME, usados, 1).getValues();
+    for (let i = 0; i < colB.length; i++) {
+      if (colB[i][0] === 'Condomínio') {
+        filtro = { condo: r.getRange(i + 1, PC.FEITAS).getValue(), de: r.getRange(i + 2, PC.FEITAS).getValue(), ate: r.getRange(i + 3, PC.FEITAS).getValue() };
         break;
       }
     }
   }
+  r.getCharts().forEach((c) => r.removeChart(c));
   r.getRange(1, 1, r.getMaxRows(), r.getMaxColumns()).breakApart();
   r.clear();
   r.clearConditionalFormatRules();
   r.getRange(1, 1, r.getMaxRows(), r.getMaxColumns()).clearDataValidations();
+  if (r.getMaxColumns() < PC.J) r.insertColumnsAfter(r.getMaxColumns(), PC.J - r.getMaxColumns());
+  if (r.getMaxColumns() > PC.J) r.deleteColumns(PC.J + 1, r.getMaxColumns() - PC.J);
   r.setHiddenGridlines(true);
-  [170, 75, 75, 65, 120, 90, 220, 220].forEach((w, i) => r.setColumnWidth(i + 1, w));
-
-  r.getRange('A1:H1').merge().setValue('PAINEL — ALPHA ADMINISTRADORA').setFontSize(16).setFontWeight('bold')
-    .setFontColor('#ffffff').setBackground(AZUL).setHorizontalAlignment('center').setVerticalAlignment('middle');
-  r.setRowHeight(1, 42);
-  r.getRange('A2:H2').merge().setValue('Atualizado em ' + quando + ' · atualiza sozinho a cada 10 minutos')
-    .setFontColor('#999999').setFontSize(9).setHorizontalAlignment('right');
+  LARG_PAINEL.forEach((w, i) => r.setColumnWidth(i + 1, w));
+  r.getRange(1, 1, r.getMaxRows(), PC.J).setBackground(FUNDO).setFontFamily('Roboto').setFontColor(TEXTO).setFontSize(10)
+    .setVerticalAlignment('middle');
 
   const V = P.vistorias || { total: 0, feitas: 0, idas: 0, pessoas: [], semana: '' };
   const L = P.leituras || { total: 0, feitas: 0, pessoas: [], mes: '' };
   const atrasadas = (L.pessoas || []).reduce((t, p) => t + p.atrasadas.length, 0);
-  const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+  const pct = (a, b) => (b ? a / b : 0);
+  const corDe = (x) => (x >= 0.8 ? OK : x >= 0.5 ? ALERTA : RUIM);
+  const pt = usarPortugues(ss);
+  const F = (range, f) => range.setFormula(pt ? paraPtBr(f) : f);
+  // barra de progresso só com números inteiros (feitas e total), para funcionar em planilha em português
+  const barra = (f, t, cor) => '=SPARKLINE(' + Math.round(f) + ', {"charttype","bar";"max",' + Math.max(1, Math.round(t)) + ';"color1","' + cor + '";"empty","zero"})';
 
-  // cartões
-  const cartao = (col, titulo, valor, sub, cor) => {
-    r.getRange(4, col, 1, 2).merge().setValue(titulo).setFontSize(9).setFontColor('#666666');
-    r.getRange(5, col, 1, 2).merge().setValue(valor).setFontSize(22).setFontWeight('bold').setFontColor(cor);
-    r.getRange(6, col, 1, 2).merge().setValue(sub).setFontSize(9).setFontColor('#666666');
-    r.getRange(4, col, 3, 2).setBackground(AZUL_CLARO).setHorizontalAlignment('center').setVerticalAlignment('middle');
+  // ---- cabeçalho
+  r.setRowHeight(1, 14);
+  r.getRange(2, PC.NOME, 1, PC.LISTA2 - 1).merge().setValue('Painel de Operações')
+    .setFontFamily('Montserrat').setFontSize(20).setFontWeight('bold').setFontColor(BRANCO).setBackground(AZUL);
+  r.getRange(3, PC.NOME, 1, PC.LISTA2 - 1).merge().setValue('Alpha Administradora  ·  vistorias da semana ' + V.semana + '  ·  leituras de ' + L.mes)
+    .setFontSize(10).setFontColor('#c9d3e6').setBackground(AZUL);
+  r.getRange(2, PC.NOME, 2, PC.LISTA2 - 1).setHorizontalAlignment('left');
+  r.setRowHeight(2, 44); r.setRowHeight(3, 24);
+  r.getRange(4, PC.NOME, 1, PC.LISTA2 - 1).merge().setValue('Atualizado em ' + quando + ' · atualiza sozinho a cada 10 minutos')
+    .setFontSize(8).setFontColor(SUAVE).setHorizontalAlignment('right');
+
+  // ---- cartões
+  const cartao = (c1, c2, titulo, valor, sub, cor) => {
+    const n = c2 - c1 + 1;
+    r.getRange(6, c1, 1, n).merge().setValue(titulo).setFontSize(8).setFontWeight('bold').setFontColor(SUAVE);
+    r.getRange(7, c1, 1, n).merge().setValue(valor).setFontSize(24).setFontWeight('bold').setFontColor(cor).setFontFamily('Montserrat');
+    r.getRange(8, c1, 1, n).merge().setValue(sub).setFontSize(9).setFontColor(SUAVE);
+    r.getRange(6, c1, 3, n).setBackground(BRANCO).setHorizontalAlignment('left')
+      .setBorder(true, true, true, true, null, null, LINHA, SpreadsheetApp.BorderStyle.SOLID);
+    r.getRange(6, c1, 3, 1).setBorder(null, true, null, null, null, null, cor, SpreadsheetApp.BorderStyle.SOLID_THICK);
   };
-  cartao(1, 'VISTORIAS DA SEMANA', V.feitas + ' de ' + V.total, pct(V.feitas, V.total) + '% · ' + V.semana, AZUL);
-  cartao(3, 'IDAS NA SEMANA', String(V.idas || 0), 'vistorias + idas extras', AZUL);
-  cartao(5, 'LEITURAS DO MÊS', L.feitas + ' de ' + L.total, pct(L.feitas, L.total) + '% · ' + L.mes, AZUL);
-  cartao(7, 'LEITURAS ATRASADAS', String(atrasadas), atrasadas ? 'precisam de atenção' : 'nenhuma 🎉', atrasadas ? '#990000' : '#2e6b1f');
-  r.setRowHeight(5, 40);
+  const pv = pct(V.feitas, V.total), pl = pct(L.feitas, L.total);
+  cartao(PC.NOME, PC.NOME, '  VISTORIAS DA SEMANA', '  ' + V.feitas + ' / ' + V.total, '  ' + Math.round(pv * 100) + '% concluído', corDe(pv));
+  cartao(PC.FEITAS, PC.PCT, '  IDAS NA SEMANA', '  ' + (V.idas || 0), '  vistorias + idas extras', AZUL);
+  cartao(PC.BARRA, PC.EXTRA, '  LEITURAS DO MÊS', '  ' + L.feitas + ' / ' + L.total, '  ' + Math.round(pl * 100) + '% concluído', corDe(pl));
+  cartao(PC.LISTA, PC.LISTA, '  LEITURAS ATRASADAS', '  ' + atrasadas, atrasadas ? '  precisam de atenção' : '  nenhuma 🎉', atrasadas ? RUIM : OK);
+  cartao(PC.LISTA2, PC.LISTA2, '  PENDENTES NA SEMANA', '  ' + (V.total - V.feitas), '  condomínios sem vistoria', (V.total - V.feitas) ? ALERTA : OK);
+  r.setRowHeight(6, 22); r.setRowHeight(7, 40); r.setRowHeight(8, 22);
 
-  let lin = 8;
-  const barra = (a, b) => { const n = b ? Math.round((a / b) * 10) : 0; return '▓'.repeat(n) + '░'.repeat(10 - n); };
-  const corPct = (p) => (p >= 80 ? VERDE : p >= 50 ? '#fff2cc' : '#f4cccc');
-  const secao = (titulo) => {
-    r.getRange(lin, 1, 1, 8).merge().setValue(titulo).setFontWeight('bold').setFontColor(AZUL).setFontSize(12)
-      .setBorder(false, false, true, false, false, false, AZUL, SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
-    r.setRowHeight(lin, 30);
+  let lin = 10;
+  const secao = (titulo, sub) => {
+    r.getRange(lin, PC.NOME, 1, PC.LISTA2 - 1).merge()
+      .setRichTextValue(SpreadsheetApp.newRichTextValue().setText(titulo + (sub ? '   ' + sub : ''))
+        .setTextStyle(0, titulo.length, SpreadsheetApp.newTextStyle().setBold(true).setFontSize(13).setForegroundColor(TEXTO).setFontFamily('Montserrat').build())
+        .build());
+    r.setRowHeight(lin, 34);
     lin++;
   };
-  const cabecalho = (cols) => {
-    r.getRange(lin, 1, 1, 8).setValues([cols]).setFontWeight('bold').setBackground(AZUL).setFontColor('#ffffff').setHorizontalAlignment('center');
+  const cab = (cols) => {
+    r.getRange(lin, PC.NOME, 1, cols.length).setValues([cols]).setFontWeight('bold').setFontSize(9)
+      .setFontColor(SUAVE).setBackground(BRANCO).setHorizontalAlignment('center')
+      .setBorder(null, null, true, null, null, null, LINHA, SpreadsheetApp.BorderStyle.SOLID);
+    r.getRange(lin, PC.NOME).setHorizontalAlignment('left');
+    r.setRowHeight(lin, 28);
+    lin++;
+  };
+  const linhaTabela = (valores, x, listas) => {
+    const f = valores[1], t = valores[2];
+    r.getRange(lin, PC.NOME, 1, valores.length).setValues([valores]).setBackground(BRANCO)
+      .setBorder(null, null, true, null, null, null, LINHA, SpreadsheetApp.BorderStyle.SOLID);
+    r.getRange(lin, PC.NOME).setFontWeight('bold').setWrap(true);
+    r.getRange(lin, PC.FEITAS, 1, PC.EXTRA - PC.FEITAS + 1).setHorizontalAlignment('center');
+    r.getRange(lin, PC.PCT).setNumberFormat('0%').setFontWeight('bold').setFontColor(corDe(x));
+    F(r.getRange(lin, PC.BARRA), barra(f, t, corDe(x)));
+    r.getRange(lin, listas, 1, PC.LISTA2 - listas + 1).setWrap(true).setFontSize(9).setFontColor(SUAVE).setVerticalAlignment('middle');
+    lin++;
+  };
+  const total = (rot, f, t, extra) => {
+    const x = pct(f, t);
+    r.getRange(lin, PC.NOME, 1, 4).setValues([[rot, f, t, x]]).setFontWeight('bold').setBackground('#e8edf6');
+    r.getRange(lin, PC.FEITAS, 1, 3).setHorizontalAlignment('center');
+    r.getRange(lin, PC.PCT).setNumberFormat('0%').setFontColor(corDe(x));
+    F(r.getRange(lin, PC.BARRA), barra(f, t, corDe(x)));
+    r.getRange(lin, PC.BARRA, 1, PC.LISTA2 - PC.BARRA + 1).setBackground('#e8edf6');
+    if (extra != null) r.getRange(lin, PC.EXTRA).setValue(extra).setHorizontalAlignment('center').setFontWeight('bold');
+    r.setRowHeight(lin, 28);
     lin++;
   };
 
-  // vistorias por colaborador
-  secao('VISTORIAS DA SEMANA — ' + V.semana);
-  cabecalho(['Colaborador', 'Feitas', 'Total', '%', 'Progresso', 'Idas extras', 'Pendentes', '']);
-  r.getRange(lin - 1, 7, 1, 2).merge();
+  // ---- gráficos (dados na aba oculta _Listas)
+  const lst = ss.getSheetByName(ABA_LISTAS);
+  lst.getRange('C1:H60').clearContent();
+  const dv = [['Colaborador', 'Feitas', 'Pendentes']].concat((V.pessoas || []).map((p) => [p.nome, p.feitas, p.total - p.feitas]));
+  const dl = [['Responsável', 'Feitas', 'A fazer']].concat((L.pessoas || []).map((p) => [p.nome, p.feitas, p.total - p.feitas]));
+  lst.getRange(1, 3, dv.length, 3).setValues(dv);
+  lst.getRange(1, 7, dl.length, 3).setValues(dl);
+  const grafico = (range, titulo, linha, coluna, largura) => r.insertChart(r.newChart()
+    .setChartType(Charts.ChartType.BAR).addRange(range).setNumHeaders(1)
+    .setOption('isStacked', true).setOption('title', titulo)
+    .setOption('titleTextStyle', { color: TEXTO, fontSize: 13, bold: true })
+    .setOption('colors', [OK, '#e57373']).setOption('legend', { position: 'top', textStyle: { color: SUAVE } })
+    .setOption('backgroundColor', BRANCO).setOption('chartArea', { left: 110, top: 50, width: '70%', height: '75%' })
+    .setOption('hAxis', { textStyle: { color: SUAVE }, gridlines: { color: LINHA } })
+    .setOption('vAxis', { textStyle: { color: TEXTO } })
+    .setOption('width', largura).setOption('height', 260)
+    .setPosition(linha, coluna, 0, 0).build());
+  secao('Visão geral');
+  grafico(lst.getRange(1, 3, dv.length, 3), 'Vistorias da semana por colaborador', lin, PC.NOME, 560);
+  grafico(lst.getRange(1, 7, dl.length, 3), 'Leituras do mês por responsável', lin, PC.BARRA + 1, 560);
+  for (let i = 0; i < 13; i++) r.setRowHeight(lin + i, 21);
+  lin += 14;
+
+  // ---- vistorias por colaborador
+  secao('Vistorias da semana', V.semana);
+  cab(['Colaborador', 'Feitas', 'Total', '%', 'Progresso', 'Idas extras', 'Condomínios pendentes', '']);
+  r.getRange(lin - 1, PC.LISTA, 1, 2).merge().setHorizontalAlignment('left');
   (V.pessoas || []).forEach((p) => {
-    const pc = pct(p.feitas, p.total);
-    r.getRange(lin, 1, 1, 7).setValues([[p.nome, p.feitas, p.total, pc + '%', barra(p.feitas, p.total), p.extras, p.pendentes.join(' · ') || '—']]);
-    r.getRange(lin, 7, 1, 2).merge().setWrap(true).setFontSize(9).setVerticalAlignment('top');
-    r.getRange(lin, 4).setBackground(corPct(pc));
-    lin++;
+    linhaTabela([p.nome, p.feitas, p.total, pct(p.feitas, p.total), '', p.extras, p.pendentes.join('  ·  ') || '✓ todos vistoriados'], pct(p.feitas, p.total), PC.LISTA);
+    r.getRange(lin - 1, PC.LISTA, 1, 2).merge();
+    r.setRowHeight(lin - 1, Math.max(30, 15 * Math.ceil((p.pendentes.join('  ·  ').length || 1) / 95) + 10));
   });
-  r.getRange(lin, 1, 1, 6).setValues([['TOTAL', V.feitas, V.total, pct(V.feitas, V.total) + '%', barra(V.feitas, V.total), '']])
-    .setFontWeight('bold').setBackground(CINZA);
-  lin += 2;
-
-  // leituras por responsável
-  secao('LEITURAS DO MÊS — ' + L.mes);
-  cabecalho(['Responsável', 'Feitas', 'Total', '%', 'Progresso', 'Atrasadas', 'Nesta semana', 'Depois']);
-  (L.pessoas || []).forEach((p) => {
-    const pc = pct(p.feitas, p.total);
-    r.getRange(lin, 1, 1, 8).setValues([[p.nome, p.feitas, p.total, pc + '%', barra(p.feitas, p.total),
-      p.atrasadas.length ? p.atrasadas.join(' · ') : '—', p.semana.join(' · ') || '—', p.depois.join(' · ') || '—']]);
-    r.getRange(lin, 6, 1, 3).setWrap(true).setFontSize(9).setVerticalAlignment('top');
-    if (p.atrasadas.length) r.getRange(lin, 6).setFontColor('#990000').setFontWeight('bold');
-    r.getRange(lin, 4).setBackground(corPct(pc));
-    lin++;
-  });
-  r.getRange(lin, 1, 1, 5).setValues([['TOTAL', L.feitas, L.total, pct(L.feitas, L.total) + '%', barra(L.feitas, L.total)]])
-    .setFontWeight('bold').setBackground(CINZA);
-  lin += 2;
-
-  // idas por condomínio (filtro)
-  secao('IDAS POR CONDOMÍNIO');
-  const f0 = lin;
-  r.getRange(lin, 1, 3, 1).setValues([['Condomínio:'], ['De:'], ['Até:']]).setFontWeight('bold').setHorizontalAlignment('right');
-  r.getRange(lin, 2, 1, 4).merge();
-  r.getRange(lin + 1, 2, 1, 2).merge();
-  r.getRange(lin + 2, 2, 1, 2).merge();
-  const hoje = new Date();
-  r.getRange(lin, 2).setValue(filtro.condo || ss.getSheetByName(ABA_LISTAS).getRange('A2').getValue() || '');
-  r.getRange(lin + 1, 2).setValue(filtro.de || new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1)).setNumberFormat('dd/mm/yyyy');
-  r.getRange(lin + 2, 2).setValue(filtro.ate || new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate())).setNumberFormat('dd/mm/yyyy');
-  r.getRange(lin, 2, 3, 4).setBackground('#fff2cc').setFontWeight('bold')
-    .setBorder(true, true, true, true, true, true, '#d6b656', SpreadsheetApp.BorderStyle.SOLID);
-  r.getRange(lin, 2).setDataValidation(SpreadsheetApp.newDataValidation()
-    .requireValueInRange(ss.getSheetByName(ABA_LISTAS).getRange('A2:A'), true).setAllowInvalid(false).build());
-  r.getRange(lin + 1, 2, 2, 1).setDataValidation(SpreadsheetApp.newDataValidation().requireDate().setAllowInvalid(false).build());
-  r.getRange(lin, 7).setValue('◀ escolha o condomínio e o período').setFontColor('#999999').setFontStyle('italic');
-  const C = '$B$' + f0, D = '$B$' + (f0 + 1), A = '$B$' + (f0 + 2);
-  lin += 4;
-  r.getRange(lin, 1, 1, 8).setValues([['Data', 'Dia', 'Quem foi', 'Tipo', 'Motivo / causa', 'Entrada', 'Saída', 'Duração']])
-    .setFontWeight('bold').setBackground(AZUL).setFontColor('#ffffff').setHorizontalAlignment('center');
+  total('Total', V.feitas, V.total, (V.pessoas || []).reduce((t, p) => t + p.extras, 0));
   lin++;
+
+  // ---- leituras por responsável
+  secao('Leituras do mês', L.mes);
+  cab(['Responsável', 'Feitas', 'Total', '%', 'Progresso', 'Atrasadas', 'Nesta semana', 'Depois']);
+  (L.pessoas || []).forEach((p) => {
+    const at = p.atrasadas.length;
+    linhaTabela([p.nome, p.feitas, p.total, pct(p.feitas, p.total), '', at || '—', p.semana.join('  ·  ') || '—', p.depois.join('  ·  ') || '—'], pct(p.feitas, p.total), PC.LISTA);
+    if (at) r.getRange(lin - 1, PC.EXTRA).setFontColor(RUIM).setFontWeight('bold').setNote('Atrasadas: ' + p.atrasadas.join(', '));
+    const maior = Math.max(p.semana.join('  ·  ').length, p.depois.join('  ·  ').length);
+    r.setRowHeight(lin - 1, Math.max(30, 15 * Math.ceil((maior || 1) / 45) + 10));
+  });
+  total('Total', L.feitas, L.total, atrasadas || '—');
+  lin++;
+
+  // ---- idas por condomínio (filtro)
+  secao('Idas por condomínio', 'escolha o condomínio e o período nas células amarelas');
+  const f0 = lin;
+  r.getRange(lin, PC.NOME, 3, 1).setValues([['Condomínio'], ['De'], ['Até']]).setFontWeight('bold').setHorizontalAlignment('right')
+    .setBackground(BRANCO);
+  r.getRange(lin, PC.FEITAS, 1, 4).merge();
+  r.getRange(lin + 1, PC.FEITAS, 1, 2).merge();
+  r.getRange(lin + 2, PC.FEITAS, 1, 2).merge();
+  const hoje = new Date();
+  r.getRange(lin, PC.FEITAS).setValue(filtro.condo || lst.getRange('A2').getValue() || '');
+  r.getRange(lin + 1, PC.FEITAS).setValue(filtro.de || new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1)).setNumberFormat('dd/mm/yyyy');
+  r.getRange(lin + 2, PC.FEITAS).setValue(filtro.ate || new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate())).setNumberFormat('dd/mm/yyyy');
+  r.getRange(lin, PC.FEITAS, 3, 4).setBackground('#fff4cc').setFontWeight('bold').setHorizontalAlignment('left')
+    .setBorder(true, true, true, true, true, true, '#e0c060', SpreadsheetApp.BorderStyle.SOLID);
+  r.getRange(lin, PC.FEITAS).setDataValidation(SpreadsheetApp.newDataValidation()
+    .requireValueInRange(lst.getRange('A2:A'), true).setAllowInvalid(false).build());
+  r.getRange(lin + 1, PC.FEITAS, 2, 1).setDataValidation(SpreadsheetApp.newDataValidation().requireDate().setAllowInvalid(false).build());
+  const C = '$C$' + f0, D = '$C$' + (f0 + 1), A = '$C$' + (f0 + 2);
+  // indicadores do condomínio escolhido
+  const cond = ABA + '!F2:F, ' + C + ', ' + ABA + '!B2:B, ">="&' + D + ', ' + ABA + '!B2:B, "<="&' + A;
+  r.getRange(lin, PC.EXTRA, 1, 1).setValue('Vistorias').setFontSize(8).setFontColor(SUAVE).setHorizontalAlignment('center');
+  r.getRange(lin, PC.LISTA, 1, 1).setValue('Idas extras').setFontSize(8).setFontColor(SUAVE).setHorizontalAlignment('center');
+  r.getRange(lin, PC.LISTA2, 1, 1).setValue('Total de idas').setFontSize(8).setFontColor(SUAVE).setHorizontalAlignment('center');
+  F(r.getRange(lin + 1, PC.EXTRA), '=IF(' + C + '="", "", COUNTIFS(' + cond + ', ' + ABA + '!I2:I, "Vistoria da semana"))');
+  F(r.getRange(lin + 1, PC.LISTA), '=IF(' + C + '="", "", COUNTIFS(' + cond + ', ' + ABA + '!I2:I, "Ida extra"))');
+  F(r.getRange(lin + 1, PC.LISTA2), '=IF(' + C + '="", "", COUNTIFS(' + cond + '))');
+  r.getRange(lin, PC.EXTRA, 3, 3).setBackground(BRANCO).setBorder(true, true, true, true, null, null, LINHA, SpreadsheetApp.BorderStyle.SOLID);
+  r.getRange(lin + 1, PC.EXTRA, 2, 3).mergeVertically().setFontSize(22).setFontWeight('bold').setFontColor(AZUL)
+    .setFontFamily('Montserrat').setHorizontalAlignment('center');
+  for (let i = 0; i < 3; i++) r.setRowHeight(lin + i, 26);
+  lin += 4;
+  cab(['Data', 'Dia', 'Quem foi', 'Tipo', 'Entrada', 'Saída', 'Motivo / causa', 'Observação']);
+  r.getRange(lin - 1, PC.LISTA, 1, 2).setHorizontalAlignment('left');
   const col = (c) => ABA + '!' + c + '2:' + c;
-  formula(r.getRange(lin, 1), '=IF(' + C + '="", "Escolha o condomínio", IFERROR(SORT(FILTER({' +
-    ['B', 'C', 'H', 'I', 'J', 'K', 'L', 'N'].map(col).join(', ') + '}, ' +
+  F(r.getRange(lin, PC.NOME), '=IF(' + C + '="", "Escolha o condomínio", IFERROR(SORT(FILTER({' +
+    ['B', 'C', 'H', 'I', 'K', 'L', 'J', 'Q'].map(col).join(', ') + '}, ' +
     col('F') + '=' + C + ', ' + col('B') + '>=' + D + ', ' + col('B') + '<=' + A + '), 1, FALSE), "Nenhuma ida no período."))');
-  r.getRange(lin, 1, 300, 1).setNumberFormat('dd/mm/yyyy');
-  r.getRange(lin, 1, 300, 8).setHorizontalAlignment('center').setFontSize(10);
-  r.getRange(lin, 5, 300, 1).setHorizontalAlignment('left');
+  const n = 200;
+  r.getRange(lin, PC.NOME, n, 8).setBackground(BRANCO).setFontSize(10);
+  r.getRange(lin, PC.NOME, n, 1).setNumberFormat('dd/mm/yyyy').setHorizontalAlignment('left');
+  r.getRange(lin, PC.FEITAS, n, 5).setHorizontalAlignment('center');
+  r.getRange(lin, PC.LISTA, n, 2).setWrap(true).setFontColor('#4a5568');
   r.setConditionalFormatRules([
-    SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('Vistoria da semana').setBackground(VERDE).setFontColor('#2e6b1f').setRanges([r.getRange(lin, 4, 300, 1)]).build(),
-    SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('Ida extra').setBackground(LARANJA).setFontColor('#9c4a0f').setRanges([r.getRange(lin, 4, 300, 1)]).build(),
+    SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('Vistoria da semana').setBackground(VERDE).setFontColor('#2e6b1f').setRanges([r.getRange(lin, PC.PCT, n, 1)]).build(),
+    SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('Ida extra').setBackground(LARANJA).setFontColor('#9c4a0f').setRanges([r.getRange(lin, PC.PCT, n, 1)]).build(),
+    SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=AND($B' + lin + '<>"", ISEVEN(ROW()))').setBackground('#f7f9fc').setRanges([r.getRange(lin, PC.NOME, n, 8)]).build(),
   ]);
-  r.setFrozenRows(2);
+  r.setFrozenRows(0);
+}
+
+// Planilha em português? (testa uma vez por atualização, numa célula da aba oculta)
+function usarPortugues(ss) {
+  const loc = String(ss.getSpreadsheetLocale() || '');
+  if (/^en/i.test(loc)) return false;
+  if (/^pt/i.test(loc)) return true;
+  const c = ss.getSheetByName(ABA_LISTAS).getRange('Z1');
+  c.setFormula('=IF(1,1,0)');
+  SpreadsheetApp.flush();
+  const pt = String(c.getDisplayValue()).indexOf('#') === 0;
+  c.clearContent();
+  return pt;
 }
 
 // ---------------------------------------------------------------- aba Assembleia
