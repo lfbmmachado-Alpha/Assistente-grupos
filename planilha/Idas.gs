@@ -40,7 +40,8 @@ function planilha() {
 
 const ABA = 'Idas';
 const ABA_RESUMO = 'Resumo';
-const ABA_LISTAS = '_Listas'; // lista de condomínios para os menus de escolha (aba oculta)
+const ABA_LISTAS = '_Listas';
+const ABA_SEMANA = 'Vistorias da semana'; // lista de condomínios para os menus de escolha (aba oculta)
 const ABA_ASSEMBLEIA = 'Assembleia';
 const ABA_LEITURAS = 'Leituras';
 const CAB = ['ID', 'Data', 'Dia', 'Semana (início)', 'Mês', 'Condomínio', 'Responsável (quadro)', 'Quem foi',
@@ -135,6 +136,7 @@ function atualizarIdas() {
   const filtroPainel = escreverPainel(ss, dados.painel || {}, quando);
   if (!ss.getSheetByName(ABA_ASSEMBLEIA)) criarAssembleia(ss);
   ss.getSheetByName(ABA_ASSEMBLEIA).getRange('H2').setValue('Atualizado em ' + quando);
+  try { escreverAbaSemana(ss); } catch (e) { console.error('aba semana: ' + e.message); }
   try { protegerAbas(ss, filtroPainel); } catch (e) { console.error('proteção: ' + e.message); }
 }
 
@@ -555,6 +557,8 @@ function escreverLeituras(ss, L) {
 function aoEditar(e) {
   try {
     const sh = e.range.getSheet();
+    // escolha de semana/colaborador na aba Vistorias da semana: refaz a aba na hora
+    if (sh.getName() === ABA_SEMANA && e.range.getRow() === SEM_LINHA_ESCOLHA) { escreverAbaSemana(sh.getParent()); return; }
     if (sh.getName() !== ABA_LEITURAS || e.range.getColumn() !== 2 || e.range.getRow() < 2) return;
     const linhas = e.range.getNumRows();
     for (let i = 0; i < linhas; i++) {
@@ -584,6 +588,7 @@ function protegerAbas(ss, filtroPainel) {
   liberar[ABA_RESUMO] = () => (filtroPainel ? [filtroPainel] : []);
   liberar[ABA_ASSEMBLEIA] = (s) => [s.getRange('B4:E6')];
   liberar[ABA_LISTAS] = () => [];
+  liberar[ABA_SEMANA] = (s) => [s.getRange(SEM_LINHA_ESCOLHA, 3), s.getRange(SEM_LINHA_ESCOLHA, 7)];
   Object.keys(liberar).forEach((nome) => {
     const sh = ss.getSheetByName(nome);
     if (!sh) return;
@@ -757,27 +762,26 @@ function montarRelatorioHTML(condo, de, ate, dados, equipe) {
 }
 
 // ---------------------------------------------------------------- relatório da semana (vistorias feitas e a fazer)
+// Usa a semana e o colaborador escolhidos na aba "Vistorias da semana" (sem janela de escolha: a janela
+// dá erro de permissão quando há mais de uma conta Google aberta no navegador).
 function abrirRelatorioSemana() {
-  const sem = buscarSemana(0);
-  const nomes = (sem.pessoas || []).map((p) => p.nome);
-  const opcoesSemana = [['0', 'Esta semana'], ['-1', 'Semana passada'], ['-2', 'Há 2 semanas'], ['-3', 'Há 3 semanas'], ['-4', 'Há 4 semanas']]
-    .map((o) => '<option value="' + o[0] + '">' + o[1] + '</option>').join('');
-  const opcoesPessoa = ['<option value="">Todos os colaboradores</option>'].concat(nomes.map((n) => '<option>' + escapar(n) + '</option>')).join('');
-  const html = HtmlService.createHtmlOutput(
-    '<div style="font-family:Arial,sans-serif;font-size:13px;color:#1f2a44;padding:4px">' +
-    '<label style="font-size:11px;color:#7a869a;font-weight:bold">SEMANA</label><br>' +
-    '<select id="s" style="width:100%;padding:7px;margin:4px 0 12px;font-size:13px">' + opcoesSemana + '</select><br>' +
-    '<label style="font-size:11px;color:#7a869a;font-weight:bold">COLABORADOR</label><br>' +
-    '<select id="p" style="width:100%;padding:7px;margin:4px 0 16px;font-size:13px">' + opcoesPessoa + '</select><br>' +
-    '<button id="b" onclick="gerar()" style="background:#1f3864;color:#fff;border:0;padding:10px 18px;border-radius:6px;font-size:13px;cursor:pointer">Gerar PDF</button>' +
-    '<div id="r" style="margin-top:14px;font-size:12px"></div></div>' +
-    '<script>function gerar(){var b=document.getElementById("b");b.disabled=true;b.textContent="Gerando…";' +
-    'google.script.run.withSuccessHandler(function(u){b.disabled=false;b.textContent="Gerar PDF";' +
-    'document.getElementById("r").innerHTML=\'<a href="\'+u+\'" target="_blank" style="color:#1f3864;font-weight:bold">Abrir PDF</a> · salvo em Alpha - Relatórios de visitas\';})' +
-    '.withFailureHandler(function(e){b.disabled=false;b.textContent="Gerar PDF";document.getElementById("r").textContent="Erro: "+e.message;})' +
-    '.gerarRelatorioSemana(Number(document.getElementById("s").value),document.getElementById("p").value);}</script>'
-  ).setWidth(360).setHeight(300);
-  SpreadsheetApp.getUi().showModalDialog(html, 'Relatório de vistorias da semana');
+  const ss = planilha();
+  const r = ss.getSheetByName(ABA_SEMANA);
+  let escSem = 'Esta semana', escPes = 'Todos';
+  if (r && r.getLastRow() >= SEM_LINHA_ESCOLHA) {
+    escSem = r.getRange(SEM_LINHA_ESCOLHA, 3).getValue() || escSem;
+    escPes = r.getRange(SEM_LINHA_ESCOLHA, 7).getValue() || escPes;
+  }
+  const url = gerarRelatorioSemana(-Math.max(0, SEMANAS.indexOf(escSem)), escPes === 'Todos' ? '' : escPes);
+  const ui = HtmlService.createHtmlOutput(
+    '<div style="font-family:Arial,sans-serif;padding:8px 4px">' +
+    '<p style="margin:0 0 6px;color:#1f2a44;font-size:14px"><b>Relatório gerado</b></p>' +
+    '<p style="margin:0 0 14px;color:#7a869a;font-size:12px">' + escapar(escSem) + ' · ' + escapar(escPes) +
+    '<br>Para mudar, escolha a semana e o colaborador na aba <b>Vistorias da semana</b>.' +
+    (avisoLogo ? '<br><span style="color:#c62828">⚠️ ' + escapar(avisoLogo) + '</span>' : '') + '</p>' +
+    '<a href="' + url + '" target="_blank" style="display:inline-block;background:#1f3864;color:#fff;padding:9px 16px;border-radius:6px;text-decoration:none;font-size:13px">Abrir PDF</a>' +
+    '</div>').setWidth(400).setHeight(avisoLogo ? 230 : 190);
+  SpreadsheetApp.getUi().showModalDialog(ui, 'Alpha');
 }
 
 function buscarSemana(offset) {
@@ -852,4 +856,119 @@ function montarRelatorioSemanaHTML(sem, pessoas, filtroPessoa) {
       'Horários registrados a partir dos avisos da equipe nos grupos do condomínio. * saída estimada. “(sem grupo)”: a IA não está no grupo desse condomínio.</div>' +
     '<div style="border-top:1px solid ' + linha + ';margin-top:22px;padding-top:8px;font-size:8.5px;color:' + suave + '">Alpha Administradora · alphacondominios.com</div>' +
     '</body></html>';
+}
+
+// ---------------------------------------------------------------- aba Vistorias da semana (relatório na tela)
+// Escolha a semana e o colaborador nas células amarelas: a aba se refaz na hora (e a cada atualização automática).
+const SEM_LINHA_ESCOLHA = 5;
+const SEMANAS = ['Esta semana', 'Semana passada', 'Há 2 semanas', 'Há 3 semanas', 'Há 4 semanas'];
+
+function escreverAbaSemana(ss) {
+  let r = ss.getSheetByName(ABA_SEMANA);
+  if (!r) r = ss.insertSheet(ABA_SEMANA, 1);
+  // escolhas atuais
+  let escSem = 'Esta semana', escPes = 'Todos';
+  if (r.getLastRow() >= SEM_LINHA_ESCOLHA) {
+    escSem = r.getRange(SEM_LINHA_ESCOLHA, 3).getValue() || escSem;
+    escPes = r.getRange(SEM_LINHA_ESCOLHA, 7).getValue() || escPes;
+  }
+  const offset = -Math.max(0, SEMANAS.indexOf(escSem));
+  const sem = buscarSemana(offset);
+  const todos = sem.pessoas || [];
+  const pessoas = escPes && escPes !== 'Todos' ? todos.filter((p) => p.nome === escPes) : todos;
+
+  r.getRange(1, 1, r.getMaxRows(), r.getMaxColumns()).breakApart();
+  r.clear();
+  r.getRange(1, 1, r.getMaxRows(), r.getMaxColumns()).setNumberFormat('@').clearDataValidations();
+  r.clearConditionalFormatRules();
+  if (r.getMaxColumns() < 9) r.insertColumnsAfter(r.getMaxColumns(), 9 - r.getMaxColumns());
+  if (r.getMaxColumns() > 9) r.deleteColumns(10, r.getMaxColumns() - 9);
+  r.setHiddenGridlines(true);
+  [28, 120, 60, 260, 90, 90, 170, 150, 28].forEach((w, i) => r.setColumnWidth(i + 1, w));
+  r.getRange(1, 1, r.getMaxRows(), 9).setBackground(FUNDO).setFontFamily('Roboto').setFontColor(TEXTO).setFontSize(10).setVerticalAlignment('middle');
+
+  // cabeçalho
+  r.setRowHeight(1, 14);
+  r.getRange(2, 2, 1, 7).merge().setValue('Vistorias da semana').setFontFamily('Montserrat').setFontSize(20).setFontWeight('bold')
+    .setFontColor(BRANCO).setBackground(AZUL);
+  r.getRange(3, 2, 1, 7).merge().setValue('Semana ' + sem.semana + '  ·  vistorias feitas e a fazer por colaborador  ·  para imprimir: menu Alpha → Relatório de vistorias da semana (PDF)')
+    .setFontSize(10).setFontColor('#c9d3e6').setBackground(AZUL);
+  r.setRowHeight(2, 44); r.setRowHeight(3, 24);
+
+  // escolhas
+  const L = SEM_LINHA_ESCOLHA;
+  r.getRange(L, 2).setValue('SEMANA').setFontSize(8).setFontWeight('bold').setFontColor(SUAVE).setHorizontalAlignment('right');
+  r.getRange(L, 3, 1, 2).merge();
+  r.getRange(L, 3).setValue(escSem).setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(SEMANAS, true).setAllowInvalid(false).build());
+  r.getRange(L, 6).setValue('COLABORADOR').setFontSize(8).setFontWeight('bold').setFontColor(SUAVE).setHorizontalAlignment('right');
+  r.getRange(L, 7, 1, 2).merge();
+  r.getRange(L, 7).setValue(escPes).setDataValidation(SpreadsheetApp.newDataValidation()
+    .requireValueInList(['Todos'].concat(todos.map((p) => p.nome)), true).setAllowInvalid(false).build());
+  [r.getRange(L, 3, 1, 2), r.getRange(L, 7, 1, 2)].forEach((g) => g.setBackground('#fff4cc').setFontWeight('bold').setFontSize(12).setFontColor(AZUL)
+    .setBorder(true, true, true, true, null, null, '#e8c766', SpreadsheetApp.BorderStyle.SOLID));
+  r.setRowHeight(L, 32);
+
+  // cartões
+  const total = pessoas.reduce((t, p) => t + p.total, 0), feitas = pessoas.reduce((t, p) => t + p.feitas, 0);
+  const x = total ? feitas / total : 0;
+  const corDe = (v) => (v >= 0.8 ? OK : v >= 0.5 ? ALERTA : RUIM);
+  const cartao = (c1, n, titulo, valor, cor) => {
+    r.getRange(7, c1, 1, n).merge().setValue(titulo).setFontSize(8).setFontWeight('bold').setFontColor(SUAVE);
+    r.getRange(8, c1, 1, n).merge().setValue(valor).setFontSize(22).setFontWeight('bold').setFontColor(cor).setFontFamily('Montserrat');
+    r.getRange(7, c1, 2, n).setBackground(BRANCO).setHorizontalAlignment('center')
+      .setBorder(true, true, true, true, null, null, LINHA, SpreadsheetApp.BorderStyle.SOLID);
+    r.getRange(7, c1, 2, 1).setBorder(null, true, null, null, null, null, cor, SpreadsheetApp.BorderStyle.SOLID_THICK);
+  };
+  cartao(2, 2, 'VISTORIADOS', feitas + ' / ' + total, corDe(x));
+  cartao(4, 1, 'CONCLUÍDO', Math.round(x * 100) + '%', corDe(x));
+  cartao(5, 2, 'A FAZER', String(total - feitas), (total - feitas) ? RUIM : OK);
+  cartao(7, 2, 'IDAS EXTRAS', String(pessoas.reduce((t, p) => t + p.extras, 0)), '#ef6c00');
+  r.setRowHeight(7, 22); r.setRowHeight(8, 38);
+
+  let lin = 10;
+  pessoas.forEach((p) => {
+    const pc = p.total ? p.feitas / p.total : 0;
+    const chave = Object.keys(LIDERANCA).find((k) => k.toLowerCase() === String(p.nome).toLowerCase());
+    // título do colaborador
+    r.getRange(lin, 2, 1, 4).merge().setRichTextValue(SpreadsheetApp.newRichTextValue()
+      .setText(p.nome + (chave ? '   liderança: ' + LIDERANCA[chave] : ''))
+      .setTextStyle(0, p.nome.length, SpreadsheetApp.newTextStyle().setBold(true).setFontSize(15).setForegroundColor(AZUL).setFontFamily('Montserrat').build())
+      .build());
+    r.getRange(lin, 6, 1, 3).merge().setValue(p.feitas + ' / ' + p.total + '  ·  ' + Math.round(pc * 100) + '%')
+      .setFontSize(14).setFontWeight('bold').setFontColor(corDe(pc)).setHorizontalAlignment('right');
+    r.getRange(lin, 2, 1, 7).setBackground(BRANCO).setBorder(true, null, null, null, null, null, corDe(pc), SpreadsheetApp.BorderStyle.SOLID_THICK);
+    r.setRowHeight(lin, 36);
+    lin++;
+    // feitas
+    r.getRange(lin, 2, 1, 7).merge().setValue('✅  VISTORIAS FEITAS (' + p.feitas + ')').setFontSize(9).setFontWeight('bold').setFontColor(OK).setBackground(BRANCO);
+    lin++;
+    if ((p.detalhe || []).length) {
+      r.getRange(lin, 2, 1, 7).setValues([['Data', 'Dia', 'Condomínio', 'Entrada', 'Saída', 'Quem foi', 'Motivo']])
+        .setFontWeight('bold').setFontSize(9).setFontColor(BRANCO).setBackground(AZUL).setHorizontalAlignment('center');
+      r.getRange(lin, 4).setHorizontalAlignment('left'); r.getRange(lin, 8).setHorizontalAlignment('left');
+      lin++;
+      const linhas = p.detalhe.map((d) => [d.data, d.dia, d.condo, d.entrada || '—', d.saida || '—', d.quem, d.motivo || '']);
+      r.getRange(lin, 2, linhas.length, 7).setValues(linhas).setBackground(BRANCO).setFontSize(10);
+      r.getRange(lin, 2, linhas.length, 1).setFontWeight('bold');
+      r.getRange(lin, 3, linhas.length, 1).setFontColor(SUAVE).setHorizontalAlignment('center');
+      r.getRange(lin, 4, linhas.length, 1).setFontWeight('bold');
+      r.getRange(lin, 5, linhas.length, 2).setHorizontalAlignment('center');
+      r.getRange(lin, 8, linhas.length, 1).setFontColor(SUAVE).setFontSize(9).setWrap(true);
+      for (let i = 1; i < linhas.length; i += 2) r.getRange(lin + i, 2, 1, 7).setBackground('#f7f9fc');
+      lin += linhas.length;
+    } else {
+      r.getRange(lin, 2, 1, 7).merge().setValue('Nenhuma vistoria registrada na semana.').setFontColor(SUAVE).setBackground(BRANCO);
+      lin++;
+    }
+    // a fazer
+    r.getRange(lin, 2, 1, 7).merge().setValue('❌  A FAZER (' + (p.total - p.feitas) + ')').setFontSize(9).setFontWeight('bold').setFontColor(RUIM).setBackground(BRANCO);
+    lin++;
+    const texto = (p.pendentes || []).join('   ·   ') || '✓ Todos os condomínios vistoriados';
+    r.getRange(lin, 2, 1, 7).merge().setValue(texto).setWrap(true).setFontSize(10)
+      .setFontColor((p.pendentes || []).length ? '#a12020' : OK).setBackground((p.pendentes || []).length ? '#fdecea' : '#e6f4ea');
+    r.setRowHeight(lin, Math.max(28, 18 * Math.ceil(texto.length / 120) + 10));
+    lin += 2;
+  });
+  r.getRange(lin, 2, 1, 7).merge().setValue('Conta como vistoria a primeira ida da semana ao condomínio, de qualquer pessoa da equipe. * saída estimada. “(sem grupo)”: a IA não está no grupo do condomínio.')
+    .setFontSize(8).setFontColor(SUAVE).setWrap(true);
 }
