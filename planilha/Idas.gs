@@ -115,9 +115,10 @@ function atualizarIdas() {
 
   if (dados.leituras) escreverLeituras(ss, dados.leituras);
   escreverListas(ss, linhas.map((l) => l[5]));
-  escreverPainel(ss, dados.painel || {}, quando);
+  const filtroPainel = escreverPainel(ss, dados.painel || {}, quando);
   if (!ss.getSheetByName(ABA_ASSEMBLEIA)) criarAssembleia(ss);
   ss.getSheetByName(ABA_ASSEMBLEIA).getRange('H2').setValue('Atualizado em ' + quando);
+  try { protegerAbas(ss, filtroPainel); } catch (e) { console.error('proteção: ' + e.message); }
 }
 
 // ---------------------------------------------------------------- aba Idas
@@ -379,6 +380,7 @@ function escreverPainel(ss, P, quando) {
     SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=AND($B' + lin + '<>"", ISEVEN(ROW()))').setBackground('#f7f9fc').setRanges([r.getRange(lin, PC.NOME, n, 8)]).build(),
   ]);
   r.setFrozenRows(0);
+  return r.getRange(f0, PC.FEITAS, 3, 1); // células do filtro (ficam liberadas para edição)
 }
 
 // Planilha em português? (testa uma vez por atualização, numa célula da aba oculta)
@@ -536,4 +538,29 @@ function aoEditar(e) {
         : 'Não consegui atualizar no sistema (' + res.getResponseCode() + ')');
     }
   } catch (err) { console.error(err); }
+}
+
+// ---------------------------------------------------------------- proteção
+// Só o sistema (e o dono da planilha) altera os dados. Ficam liberados para quem edita:
+//   Idas → coluna Observação · Leituras → coluna Responsável · Resumo e Assembleia → as células amarelas do filtro.
+const TAG_PROTECAO = 'Alpha: atualizado pelo sistema';
+function protegerAbas(ss, filtroPainel) {
+  const eu = Session.getEffectiveUser();
+  const liberar = {};
+  liberar[ABA] = (s) => [s.getRange(2, COL_OBS, Math.max(s.getMaxRows() - 1, 1), 1)];
+  liberar[ABA_LEITURAS] = (s) => [s.getRange(2, 2, Math.max(s.getMaxRows() - 1, 1), 1)];
+  liberar[ABA_RESUMO] = () => (filtroPainel ? [filtroPainel] : []);
+  liberar[ABA_ASSEMBLEIA] = (s) => [s.getRange('B4:E6')];
+  liberar[ABA_LISTAS] = () => [];
+  Object.keys(liberar).forEach((nome) => {
+    const sh = ss.getSheetByName(nome);
+    if (!sh) return;
+    sh.getProtections(SpreadsheetApp.ProtectionType.SHEET)
+      .filter((p) => p.getDescription() === TAG_PROTECAO).forEach((p) => p.remove());
+    const p = sh.protect().setDescription(TAG_PROTECAO);
+    p.setUnprotectedRanges(liberar[nome](sh));
+    p.addEditor(eu);
+    p.removeEditors(p.getEditors().filter((u) => u.getEmail() !== eu.getEmail()));
+    if (p.canDomainEdit()) p.setDomainEdit(false);
+  });
 }
