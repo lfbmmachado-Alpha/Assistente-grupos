@@ -20,8 +20,8 @@ const URL_IDAS = 'COLE_AQUI_O_LINK_DO_!planilha';
 // cole aqui o ID da planilha (o trecho entre /d/ e /edit no endereço dela). Dentro da planilha, deixe vazio.
 const ID_PLANILHA = '';
 
-// Logo da Alpha para o relatório em PDF: cole o ID do arquivo da logo no Google Drive (o trecho entre /d/ e /view
-// no link do arquivo) ou um link direto da imagem (https://…png). Vazio: o relatório sai com o nome por extenso.
+// Logo da Alpha para o relatório em PDF: cole o link do arquivo da logo no Google Drive (Compartilhar → Copiar link)
+// ou um link direto da imagem (https://…png). Vazio: o relatório sai com o nome por extenso.
 const LOGO = '';
 
 function planilha() {
@@ -643,7 +643,9 @@ function escapar(t) { return String(t == null ? '' : t).replace(/&/g, '&amp;').r
 function logoBase64() {
   if (!LOGO) return '';
   try {
-    const blob = /^https?:/.test(LOGO) ? UrlFetchApp.fetch(LOGO).getBlob() : DriveApp.getFileById(LOGO).getBlob();
+    // aceita o link do Drive inteiro (…/file/d/ID/view…), só o ID, ou um link direto de imagem
+    const id = (LOGO.match(/\/d\/([\w-]{20,})/) || LOGO.match(/[?&]id=([\w-]{20,})/) || [])[1] || (/^[\w-]{20,}$/.test(LOGO) ? LOGO : '');
+    const blob = id ? DriveApp.getFileById(id).getBlob() : UrlFetchApp.fetch(LOGO).getBlob();
     return 'data:' + blob.getContentType() + ';base64,' + Utilities.base64Encode(blob.getBytes());
   } catch (e) { return ''; }
 }
