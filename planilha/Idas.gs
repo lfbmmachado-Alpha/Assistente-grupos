@@ -193,6 +193,7 @@ function escreverPainel(ss, P, quando) {
   r.getCharts().forEach((c) => r.removeChart(c));
   r.getRange(1, 1, r.getMaxRows(), r.getMaxColumns()).breakApart();
   r.clear();
+  r.getRange(1, 1, r.getMaxRows(), r.getMaxColumns()).setNumberFormat('General');
   r.clearConditionalFormatRules();
   r.getRange(1, 1, r.getMaxRows(), r.getMaxColumns()).clearDataValidations();
   if (r.getMaxColumns() < PC.J) r.insertColumnsAfter(r.getMaxColumns(), PC.J - r.getMaxColumns());
@@ -210,7 +211,7 @@ function escreverPainel(ss, P, quando) {
   const pt = usarPortugues(ss);
   const F = (range, f) => range.setFormula(pt ? paraPtBr(f) : f);
   // barra de progresso só com números inteiros (feitas e total), para funcionar em planilha em português
-  const barra = (f, t, cor) => '=SPARKLINE(' + Math.round(f) + ', {"charttype","bar";"max",' + Math.max(1, Math.round(t)) + ';"color1","' + cor + '";"empty","zero"})';
+  const barra = (f, t, cor) => '=SPARKLINE(' + Math.round(f) + ', {"charttype","bar";"max",' + Math.max(1, Math.round(t)) + ';"color1","' + cor + '";"color2","#e3e8f0";"empty","zero"})';
 
   // ---- cabeçalho
   r.setRowHeight(1, 14);
@@ -264,6 +265,7 @@ function escreverPainel(ss, P, quando) {
       .setBorder(null, null, true, null, null, null, LINHA, SpreadsheetApp.BorderStyle.SOLID);
     r.getRange(lin, PC.NOME).setFontWeight('bold').setWrap(true);
     r.getRange(lin, PC.FEITAS, 1, PC.EXTRA - PC.FEITAS + 1).setHorizontalAlignment('center');
+    r.getRange(lin, PC.FEITAS, 1, 2).setNumberFormat('0'); // sem herdar formato de data de atualizações anteriores
     r.getRange(lin, PC.PCT).setNumberFormat('0%').setFontWeight('bold').setFontColor(corDe(x));
     F(r.getRange(lin, PC.BARRA), barra(f, t, corDe(x)));
     r.getRange(lin, listas, 1, PC.LISTA2 - listas + 1).setWrap(true).setFontSize(9).setFontColor(SUAVE).setVerticalAlignment('middle');
@@ -273,6 +275,7 @@ function escreverPainel(ss, P, quando) {
     const x = pct(f, t);
     r.getRange(lin, PC.NOME, 1, 4).setValues([[rot, f, t, x]]).setFontWeight('bold').setBackground('#e8edf6');
     r.getRange(lin, PC.FEITAS, 1, 3).setHorizontalAlignment('center');
+    r.getRange(lin, PC.FEITAS, 1, 2).setNumberFormat('0');
     r.getRange(lin, PC.PCT).setNumberFormat('0%').setFontColor(corDe(x));
     F(r.getRange(lin, PC.BARRA), barra(f, t, corDe(x)));
     r.getRange(lin, PC.BARRA, 1, PC.LISTA2 - PC.BARRA + 1).setBackground('#e8edf6');
