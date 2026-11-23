@@ -20,6 +20,10 @@ const URL_IDAS = 'COLE_AQUI_O_LINK_DO_!planilha';
 // cole aqui o ID da planilha (o trecho entre /d/ e /edit no endereço dela). Dentro da planilha, deixe vazio.
 const ID_PLANILHA = '';
 
+// Logo da Alpha para o relatório em PDF: cole o ID do arquivo da logo no Google Drive (o trecho entre /d/ e /view
+// no link do arquivo) ou um link direto da imagem (https://…png). Vazio: o relatório sai com o nome por extenso.
+const LOGO = '';
+
 function planilha() {
   return ID_PLANILHA ? SpreadsheetApp.openById(ID_PLANILHA) : SpreadsheetApp.getActive();
 }
@@ -41,6 +45,8 @@ function onOpen() {
   SpreadsheetApp.getUi().createMenu('Alpha')
     .addItem('Atualizar idas agora', 'atualizarIdas')
     .addItem('Ligar atualização automática (a cada 10 min)', 'instalarGatilho')
+    .addSeparator()
+    .addItem('📄 Gerar relatório em PDF (condomínio escolhido)', 'gerarRelatorioPDF')
     .addSeparator()
     .addItem('Refazer layout', 'refazerLayout')
     .addToUi();
@@ -336,52 +342,67 @@ function escreverPainel(ss, P, quando) {
   lin++;
 
   // ---- idas por condomínio (filtro)
-  secao('Idas por condomínio', 'escolha o condomínio e o período nas células amarelas');
+  secao('Idas por condomínio', 'escolha nas células amarelas  ·  para imprimir: menu Alpha → Gerar relatório em PDF');
   const f0 = lin;
-  r.getRange(lin, PC.NOME, 3, 1).setValues([['Condomínio'], ['De'], ['Até']]).setFontWeight('bold').setHorizontalAlignment('right')
-    .setBackground(BRANCO);
-  r.getRange(lin, PC.FEITAS, 1, 4).merge();
-  r.getRange(lin + 1, PC.FEITAS, 1, 2).merge();
-  r.getRange(lin + 2, PC.FEITAS, 1, 2).merge();
   const hoje = new Date();
+  // rótulos
+  r.getRange(lin, PC.NOME, 3, 1).setValues([['CONDOMÍNIO'], ['DE'], ['ATÉ']]).setFontSize(8).setFontWeight('bold')
+    .setFontColor(SUAVE).setHorizontalAlignment('right').setBackground(BRANCO);
+  // campos amarelos (C:F)
+  for (let i = 0; i < 3; i++) r.getRange(lin + i, PC.FEITAS, 1, 4).merge();
   r.getRange(lin, PC.FEITAS).setValue(filtro.condo || lst.getRange('A2').getValue() || '');
   r.getRange(lin + 1, PC.FEITAS).setValue(filtro.de || new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1)).setNumberFormat('dd/mm/yyyy');
   r.getRange(lin + 2, PC.FEITAS).setValue(filtro.ate || new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate())).setNumberFormat('dd/mm/yyyy');
-  r.getRange(lin, PC.FEITAS, 3, 4).setBackground('#fff4cc').setFontWeight('bold').setHorizontalAlignment('left')
-    .setBorder(true, true, true, true, true, true, '#e0c060', SpreadsheetApp.BorderStyle.SOLID);
+  r.getRange(lin, PC.FEITAS, 3, 4).setBackground('#fff4cc').setFontWeight('bold').setFontSize(11).setHorizontalAlignment('left')
+    .setBorder(true, true, true, true, null, true, '#e8c766', SpreadsheetApp.BorderStyle.SOLID);
+  r.getRange(lin, PC.FEITAS).setFontSize(13).setFontColor(AZUL);
   r.getRange(lin, PC.FEITAS).setDataValidation(SpreadsheetApp.newDataValidation()
     .requireValueInRange(lst.getRange('A2:A'), true).setAllowInvalid(false).build());
   r.getRange(lin + 1, PC.FEITAS, 2, 1).setDataValidation(SpreadsheetApp.newDataValidation().requireDate().setAllowInvalid(false).build());
+  r.getRange(lin, PC.NOME, 3, 5).setBorder(true, true, true, true, null, null, LINHA, SpreadsheetApp.BorderStyle.SOLID);
   const C = '$C$' + f0, D = '$C$' + (f0 + 1), A = '$C$' + (f0 + 2);
-  // indicadores do condomínio escolhido
   const cond = ABA + '!F2:F, ' + C + ', ' + ABA + '!B2:B, ">="&' + D + ', ' + ABA + '!B2:B, "<="&' + A;
-  r.getRange(lin, PC.EXTRA, 1, 1).setValue('Vistorias').setFontSize(8).setFontColor(SUAVE).setHorizontalAlignment('center');
-  r.getRange(lin, PC.LISTA, 1, 1).setValue('Idas extras').setFontSize(8).setFontColor(SUAVE).setHorizontalAlignment('center');
-  r.getRange(lin, PC.LISTA2, 1, 1).setValue('Total de idas').setFontSize(8).setFontColor(SUAVE).setHorizontalAlignment('center');
-  F(r.getRange(lin + 1, PC.EXTRA), '=IF(' + C + '="", "", COUNTIFS(' + cond + ', ' + ABA + '!I2:I, "Vistoria da semana"))');
-  F(r.getRange(lin + 1, PC.LISTA), '=IF(' + C + '="", "", COUNTIFS(' + cond + ', ' + ABA + '!I2:I, "Ida extra"))');
-  F(r.getRange(lin + 1, PC.LISTA2), '=IF(' + C + '="", "", COUNTIFS(' + cond + '))');
-  r.getRange(lin, PC.EXTRA, 3, 3).setBackground(BRANCO).setBorder(true, true, true, true, null, null, LINHA, SpreadsheetApp.BorderStyle.SOLID);
-  r.getRange(lin + 1, PC.EXTRA, 2, 3).mergeVertically().setFontSize(22).setFontWeight('bold').setFontColor(AZUL)
-    .setFontFamily('Montserrat').setHorizontalAlignment('center');
-  for (let i = 0; i < 3; i++) r.setRowHeight(lin + i, 26);
+  // três cartões (G, H, I) com faixa colorida
+  const mini = (c, titulo, f, sub, cor) => {
+    r.getRange(lin, c).setValue(titulo).setFontSize(8).setFontWeight('bold').setFontColor(SUAVE);
+    F(r.getRange(lin + 1, c), f);
+    r.getRange(lin + 1, c).setFontSize(24).setFontWeight('bold').setFontColor(cor).setFontFamily('Montserrat');
+    if (sub.charAt(0) === '=') F(r.getRange(lin + 2, c), sub); else r.getRange(lin + 2, c).setValue(sub);
+    r.getRange(lin + 2, c).setFontSize(8).setFontColor(SUAVE);
+    r.getRange(lin, c, 3, 1).setBackground(BRANCO).setHorizontalAlignment('center')
+      .setBorder(true, true, true, true, null, null, LINHA, SpreadsheetApp.BorderStyle.SOLID);
+    r.getRange(lin, c, 3, 1).setBorder(null, true, null, null, null, null, cor, SpreadsheetApp.BorderStyle.SOLID_THICK);
+  };
+  mini(PC.EXTRA, 'VISTORIAS', '=IF(' + C + '="", "–", COUNTIFS(' + cond + ', ' + ABA + '!I2:I, "Vistoria da semana"))', 'vistoria da semana', OK);
+  mini(PC.LISTA, 'IDAS EXTRAS', '=IF(' + C + '="", "–", COUNTIFS(' + cond + ', ' + ABA + '!I2:I, "Ida extra"))', 'manutenção, entregas, assembleias…', '#ef6c00');
+  mini(PC.LISTA2, 'TOTAL DE IDAS', '=IF(' + C + '="", "–", COUNTIFS(' + cond + '))',
+    '=IF(' + C + '="", "", "tempo no condomínio: " & IFERROR(TEXT(SUMPRODUCT((' + ABA + '!F2:F=' + C + ')*(' + ABA + '!B2:B>=' + D + ')*(' + ABA + '!B2:B<=' + A +
+    ')*IFERROR(TIMEVALUE(' + ABA + '!N2:N&":00"), 0)), "[h]:mm") & " h", "-"))', AZUL);
+  r.setRowHeight(lin, 26); r.setRowHeight(lin + 1, 40); r.setRowHeight(lin + 2, 26);
   lin += 4;
-  cab(['Data', 'Dia', 'Entrada', 'Saída', 'Tipo', 'Quem foi', 'Motivo / causa', 'Observação']); // ordem casada com a largura das colunas
-  r.getRange(lin - 1, PC.LISTA, 1, 2).setHorizontalAlignment('left');
+  // tabela
+  r.getRange(lin, PC.NOME, 1, 8).setValues([['Data', 'Dia', 'Entrada', 'Saída', 'Tipo', 'Quem foi', 'Motivo / causa', 'Observação']])
+    .setFontWeight('bold').setFontSize(9).setFontColor(BRANCO).setBackground(AZUL).setHorizontalAlignment('center');
+  r.getRange(lin, PC.NOME).setHorizontalAlignment('left');
+  r.getRange(lin, PC.LISTA, 1, 2).setHorizontalAlignment('left');
+  r.setRowHeight(lin, 30);
+  lin++;
   const col = (c) => ABA + '!' + c + '2:' + c;
   F(r.getRange(lin, PC.NOME), '=IF(' + C + '="", "Escolha o condomínio", IFERROR(SORT(FILTER({' +
     ['B', 'C', 'K', 'L', 'I', 'H', 'J', 'Q'].map(col).join(', ') + '}, ' +
     col('F') + '=' + C + ', ' + col('B') + '>=' + D + ', ' + col('B') + '<=' + A + '), 1, FALSE), "Nenhuma ida no período."))');
   const n = 200;
-  r.getRange(lin, PC.NOME, n, 8).setBackground(BRANCO).setFontSize(10);
-  r.getRange(lin, PC.NOME, n, 1).setNumberFormat('dd/mm/yyyy').setHorizontalAlignment('left');
+  r.getRange(lin, PC.NOME, n, 8).setBackground(BRANCO).setFontSize(10).setVerticalAlignment('middle');
+  r.getRange(lin, PC.NOME, n, 1).setNumberFormat('dd/mm/yyyy').setHorizontalAlignment('left').setFontWeight('bold');
   r.getRange(lin, PC.FEITAS, n, 5).setHorizontalAlignment('center');
+  r.getRange(lin, PC.FEITAS, n, 1).setFontColor(SUAVE);
   r.getRange(lin, PC.LISTA, n, 2).setWrap(true).setFontColor('#4a5568');
   r.setConditionalFormatRules([
-    SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('Vistoria da semana').setBackground(VERDE).setFontColor('#2e6b1f').setRanges([r.getRange(lin, PC.BARRA, n, 1)]).build(),
-    SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('Ida extra').setBackground(LARANJA).setFontColor('#9c4a0f').setRanges([r.getRange(lin, PC.BARRA, n, 1)]).build(),
+    SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('Vistoria da semana').setBackground('#e6f4ea').setFontColor(OK).setBold(true).setRanges([r.getRange(lin, PC.BARRA, n, 1)]).build(),
+    SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('Ida extra').setBackground('#fff1e6').setFontColor('#c25e00').setBold(true).setRanges([r.getRange(lin, PC.BARRA, n, 1)]).build(),
     SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=AND($B' + lin + '<>"", ISEVEN(ROW()))').setBackground('#f7f9fc').setRanges([r.getRange(lin, PC.NOME, n, 8)]).build(),
   ]);
+  r.getRange(lin, PC.NOME, n, 8).setBorder(null, null, null, null, null, true, LINHA, SpreadsheetApp.BorderStyle.SOLID);
   r.setFrozenRows(0);
   return r.getRange(f0, PC.FEITAS, 3, 1); // células do filtro (ficam liberadas para edição)
 }
@@ -566,4 +587,132 @@ function protegerAbas(ss, filtroPainel) {
     p.removeEditors(p.getEditors().filter((u) => u.getEmail() !== eu.getEmail()));
     if (p.canDomainEdit()) p.setDomainEdit(false);
   });
+}
+
+// ---------------------------------------------------------------- relatório em PDF
+// Usa o condomínio e o período escolhidos na aba Resumo (ou, se não houver, na Assembleia).
+function gerarRelatorioPDF() {
+  const ss = planilha();
+  const esc = escolhaAtual(ss);
+  if (!esc.condo) { SpreadsheetApp.getUi().alert('Escolha o condomínio e o período na aba Resumo (células amarelas) e tente de novo.'); return; }
+  const de = new Date(esc.de), ate = new Date(esc.ate);
+  ate.setHours(23, 59, 59);
+  const sh = ss.getSheetByName(ABA);
+  const dados = sh.getRange(2, 1, Math.max(sh.getLastRow() - 1, 1), COL_OBS).getValues()
+    .filter((l) => l[0] && l[5] === esc.condo && l[1] instanceof Date && l[1] >= de && l[1] <= ate)
+    .sort((a, b) => (a[1] - b[1]) || String(a[10]).localeCompare(String(b[10])));
+  const html = montarRelatorioHTML(esc.condo, de, ate, dados);
+  const nome = 'Relatório de visitas - ' + esc.condo + ' - ' + fmtData(de).replace(/\//g, '-') + ' a ' + fmtData(ate).replace(/\//g, '-') + '.pdf';
+  const pdf = Utilities.newBlob(html, 'text/html', 'relatorio.html').getAs('application/pdf').setName(nome);
+  const pasta = pastaRelatorios();
+  const arq = pasta.createFile(pdf);
+  const ui = HtmlService.createHtmlOutput(
+    '<div style="font-family:Arial,sans-serif;padding:8px 4px">' +
+    '<p style="margin:0 0 6px;color:#1f2a44;font-size:14px"><b>Relatório gerado</b></p>' +
+    '<p style="margin:0 0 14px;color:#7a869a;font-size:12px">' + escapar(nome) + '<br>Salvo na pasta <b>' + escapar(pasta.getName()) + '</b> do seu Google Drive.</p>' +
+    '<a href="' + arq.getUrl() + '" target="_blank" style="display:inline-block;background:#1f3864;color:#fff;padding:9px 16px;border-radius:6px;text-decoration:none;font-size:13px">Abrir PDF</a>' +
+    '</div>').setWidth(380).setHeight(170);
+  SpreadsheetApp.getUi().showModalDialog(ui, 'Alpha');
+}
+
+function escolhaAtual(ss) {
+  const r = ss.getSheetByName(ABA_RESUMO);
+  if (r && r.getLastRow()) {
+    const colB = r.getRange(1, 2, r.getLastRow(), 1).getValues();
+    for (let i = 0; i < colB.length; i++) {
+      if (colB[i][0] === 'CONDOMÍNIO' || colB[i][0] === 'Condomínio') {
+        const v = r.getRange(i + 1, 3, 3, 1).getValues();
+        if (v[0][0]) return { condo: v[0][0], de: v[1][0], ate: v[2][0] };
+      }
+    }
+  }
+  const a = ss.getSheetByName(ABA_ASSEMBLEIA);
+  if (a) { const v = a.getRange('B4:B6').getValues(); return { condo: v[0][0], de: v[1][0], ate: v[2][0] }; }
+  return {};
+}
+
+function pastaRelatorios() {
+  const nome = 'Alpha - Relatórios de visitas';
+  const it = DriveApp.getFoldersByName(nome);
+  return it.hasNext() ? it.next() : DriveApp.createFolder(nome);
+}
+
+function fmtData(d) { return Utilities.formatDate(d, 'America/Sao_Paulo', 'dd/MM/yyyy'); }
+function escapar(t) { return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+
+function logoBase64() {
+  if (!LOGO) return '';
+  try {
+    const blob = /^https?:/.test(LOGO) ? UrlFetchApp.fetch(LOGO).getBlob() : DriveApp.getFileById(LOGO).getBlob();
+    return 'data:' + blob.getContentType() + ';base64,' + Utilities.base64Encode(blob.getBytes());
+  } catch (e) { return ''; }
+}
+
+function montarRelatorioHTML(condo, de, ate, dados) {
+  const azul = '#1f3864', suave = '#6b778c', linha = '#dfe5ee';
+  const vist = dados.filter((l) => l[8] === 'Vistoria da semana').length;
+  const extras = dados.length - vist;
+  let minutos = 0;
+  dados.forEach((l) => { const m = String(l[13] || '').match(/^(\d+):(\d{2})$/); if (m) minutos += Number(m[1]) * 60 + Number(m[2]); });
+  const tempo = Math.floor(minutos / 60) + 'h' + String(minutos % 60).padStart(2, '0');
+  const pessoas = Array.from(new Set(dados.map((l) => l[7]).filter(String)));
+  // por mês
+  const meses = {};
+  dados.forEach((l) => { const k = Utilities.formatDate(l[1], 'America/Sao_Paulo', 'MM/yyyy'); meses[k] = meses[k] || [0, 0]; meses[k][l[8] === 'Vistoria da semana' ? 0 : 1]++; });
+  const logo = logoBase64();
+  const marca = logo
+    ? '<img src="' + logo + '" style="height:54px">'
+    : '<div style="font-size:24px;font-weight:bold;color:' + azul + ';letter-spacing:1px">ALPHA</div><div style="font-size:10px;color:' + suave + ';letter-spacing:3px">ADMINISTRADORA</div>';
+  const caixa = (titulo, valor, cor) =>
+    '<td style="width:25%;padding:0 6px"><div style="border:1px solid ' + linha + ';border-left:4px solid ' + cor + ';padding:10px 12px;border-radius:4px">' +
+    '<div style="font-size:9px;color:' + suave + ';font-weight:bold;letter-spacing:1px">' + titulo + '</div>' +
+    '<div style="font-size:22px;font-weight:bold;color:' + cor + ';margin-top:4px">' + valor + '</div></div></td>';
+  const linhas = dados.map((l, i) => {
+    const vistoria = l[8] === 'Vistoria da semana';
+    const est = l[12] === 'Sim' ? '*' : '';
+    return '<tr style="background:' + (i % 2 ? '#f7f9fc' : '#ffffff') + '">' +
+      '<td style="padding:6px 8px;font-weight:bold">' + fmtData(l[1]) + '</td>' +
+      '<td style="padding:6px 8px;color:' + suave + '">' + escapar(l[2]) + '</td>' +
+      '<td style="padding:6px 8px;text-align:center">' + escapar(l[10] || '—') + '</td>' +
+      '<td style="padding:6px 8px;text-align:center">' + escapar((l[11] || '—') + (l[11] ? est : '')) + '</td>' +
+      '<td style="padding:6px 8px;text-align:center">' + escapar(l[13] || '—') + '</td>' +
+      '<td style="padding:6px 8px"><span style="font-size:9px;font-weight:bold;padding:2px 7px;border-radius:9px;color:' + (vistoria ? '#2e7d32' : '#c25e00') +
+        ';background:' + (vistoria ? '#e6f4ea' : '#fff1e6') + '">' + (vistoria ? 'VISTORIA' : 'IDA EXTRA') + '</span></td>' +
+      '<td style="padding:6px 8px">' + escapar(l[7]) + '</td>' +
+      '<td style="padding:6px 8px;color:#3d4757">' + escapar(l[9] || '') + (l[16] ? '<div style="color:' + suave + ';font-size:9px;margin-top:2px">Obs.: ' + escapar(l[16]) + '</div>' : '') + '</td></tr>';
+  }).join('');
+  const th = (t, al) => '<th style="padding:7px 8px;text-align:' + (al || 'left') + ';font-size:9px;letter-spacing:.5px;color:#fff;background:' + azul + '">' + t + '</th>';
+  const tabelaMeses = Object.keys(meses).length > 1
+    ? '<h3 style="font-size:12px;color:' + azul + ';margin:22px 0 8px">Resumo por mês</h3><table style="border-collapse:collapse;width:60%;font-size:10px">' +
+      '<tr>' + th('MÊS') + th('VISTORIAS', 'center') + th('IDAS EXTRAS', 'center') + th('TOTAL', 'center') + '</tr>' +
+      Object.keys(meses).sort((a, b) => a.slice(3) + a.slice(0, 2) < b.slice(3) + b.slice(0, 2) ? -1 : 1).map((k, i) => '<tr style="background:' + (i % 2 ? '#f7f9fc' : '#fff') + '"><td style="padding:5px 8px">' + k + '</td><td style="padding:5px 8px;text-align:center">' + meses[k][0] +
+        '</td><td style="padding:5px 8px;text-align:center">' + meses[k][1] + '</td><td style="padding:5px 8px;text-align:center;font-weight:bold">' + (meses[k][0] + meses[k][1]) + '</td></tr>').join('') + '</table>'
+    : '';
+  return '<html><head><meta charset="utf-8"></head><body style="font-family:Arial,Helvetica,sans-serif;color:#1f2a44;font-size:10px;margin:0">' +
+    '<table style="width:100%;border-collapse:collapse"><tr>' +
+    '<td style="vertical-align:middle">' + marca + '</td>' +
+    '<td style="text-align:right;vertical-align:middle"><div style="font-size:16px;font-weight:bold;color:' + azul + '">RELATÓRIO DE VISITAS</div>' +
+    '<div style="font-size:9px;color:' + suave + ';margin-top:3px">Emitido em ' + fmtData(new Date()) + '</div></td></tr></table>' +
+    '<div style="height:3px;background:' + azul + ';margin:12px 0 18px"></div>' +
+    '<div style="font-size:9px;color:' + suave + ';letter-spacing:1px;font-weight:bold">CONDOMÍNIO</div>' +
+    '<div style="font-size:22px;font-weight:bold;color:' + azul + ';margin:2px 0 4px">' + escapar(condo) + '</div>' +
+    '<div style="font-size:11px;color:' + suave + '">Período: <b style="color:#1f2a44">' + fmtData(de) + ' a ' + fmtData(ate) + '</b>' +
+      (pessoas.length ? '  ·  Equipe: ' + escapar(pessoas.join(', ')) : '') + '</div>' +
+    '<table style="width:100%;border-collapse:collapse;margin:18px -6px 6px"><tr>' +
+      caixa('VISTORIAS', vist, '#2e7d32') + caixa('IDAS EXTRAS', extras, '#ef6c00') + caixa('TOTAL DE IDAS', dados.length, azul) + caixa('TEMPO NO CONDOMÍNIO', tempo, azul) +
+    '</tr></table>' +
+    tabelaMeses +
+    '<h3 style="font-size:12px;color:' + azul + ';margin:22px 0 8px">Registro das idas</h3>' +
+    (dados.length
+      ? '<table style="width:100%;border-collapse:collapse;font-size:10px">' +
+        '<tr>' + th('DATA') + th('DIA') + th('ENTRADA', 'center') + th('SAÍDA', 'center') + th('DURAÇÃO', 'center') + th('TIPO') + th('QUEM FOI') + th('MOTIVO / CAUSA') + '</tr>' +
+        linhas + '</table>'
+      : '<p style="color:' + suave + '">Nenhuma ida registrada no período.</p>') +
+    '<div style="margin-top:16px;font-size:8.5px;color:' + suave + ';line-height:1.5">' +
+      '<b>Vistoria</b>: visita da semana ao condomínio. <b>Ida extra</b>: demais idas (manutenção, entregas, assembleias, acompanhamento de serviços).<br>' +
+      'Horários registrados a partir dos avisos da equipe nos grupos do condomínio. * saída estimada.' +
+    '</div>' +
+    '<div style="border-top:1px solid ' + linha + ';margin-top:26px;padding-top:8px;font-size:8.5px;color:' + suave + '">' +
+      'Alpha Administradora · alphacondominios.com</div>' +
+    '</body></html>';
 }
