@@ -287,8 +287,11 @@ function escreverPainel(ss, P, quando) {
   const dl = [['Responsável', 'Feitas', 'A fazer']].concat((L.pessoas || []).map((p) => [p.nome, p.feitas, p.total - p.feitas]));
   lst.getRange(1, 3, dv.length, 3).setValues(dv);
   lst.getRange(1, 7, dl.length, 3).setValues(dl);
+  SpreadsheetApp.flush(); // os dados precisam estar gravados antes de o gráfico ler
+  // a aba _Listas é oculta: sem SHOW_BOTH o gráfico ignora dados ocultos e fica em branco
   const grafico = (range, titulo, linha, coluna, largura) => r.insertChart(r.newChart()
     .setChartType(Charts.ChartType.BAR).addRange(range).setNumHeaders(1)
+    .setHiddenDimensionStrategy(Charts.ChartHiddenDimensionStrategy.SHOW_BOTH)
     .setOption('isStacked', true).setOption('title', titulo)
     .setOption('titleTextStyle', { color: TEXTO, fontSize: 13, bold: true })
     .setOption('colors', [OK, '#e57373']).setOption('legend', { position: 'top', textStyle: { color: SUAVE } })
