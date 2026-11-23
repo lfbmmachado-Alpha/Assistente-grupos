@@ -414,7 +414,7 @@ function escreverPainel(ss, P, quando) {
   ]);
   r.getRange(lin, PC.NOME, n, 8).setBorder(null, null, null, null, null, true, LINHA, SpreadsheetApp.BorderStyle.SOLID);
   r.setFrozenRows(0);
-  return r.getRange(f0, PC.FEITAS, 3, 1); // células do filtro (ficam liberadas para edição)
+  return r.getRange(f0, PC.FEITAS, 3, 4); // células do filtro, com a mesclagem inteira (C:F), liberadas para edição
 }
 
 // Planilha em português? (testa uma vez por atualização, numa célula da aba oculta)
@@ -588,7 +588,7 @@ function protegerAbas(ss, filtroPainel) {
   liberar[ABA_RESUMO] = () => (filtroPainel ? [filtroPainel] : []);
   liberar[ABA_ASSEMBLEIA] = (s) => [s.getRange('B4:E6')];
   liberar[ABA_LISTAS] = () => [];
-  liberar[ABA_SEMANA] = (s) => [s.getRange(SEM_LINHA_ESCOLHA, 3), s.getRange(SEM_LINHA_ESCOLHA, 7)];
+  liberar[ABA_SEMANA] = (s) => [s.getRange(SEM_LINHA_ESCOLHA, 3, 1, 2), s.getRange(SEM_LINHA_ESCOLHA, 7, 1, 2)]; // células mescladas inteiras
   Object.keys(liberar).forEach((nome) => {
     const sh = ss.getSheetByName(nome);
     if (!sh) return;
