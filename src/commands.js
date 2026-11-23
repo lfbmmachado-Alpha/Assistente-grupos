@@ -987,6 +987,7 @@ export async function handleCommand(msg, suggestionGroup) {
         `📊 *Status* (versão ${process.env.RAILWAY_GIT_COMMIT_SHA ? process.env.RAILWAY_GIT_COMMIT_SHA.slice(0, 7) : 'local'})\nModo: ${await getMode()}${(await getMode()) === 'teste' ? ` (${teste.length} condomínios)` : ''}\n` +
         `Grupos conhecidos: ${s.grupos}\nMensagens nas últimas 24h: ${s.msgs_24h}\nPendências abertas: ${await contarAssuntos()} assunto(s)\n\n` +
         `🧠 *IA (Gemini)* desde ${saudeIA.desde.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}\n` +
+        `Chave em uso: termina em *${String(config.geminiKey || '').slice(-5)}* · modelos: ${config.geminiModel} / ${config.geminiModelLeve}\n` +
         `✅ ${saudeIA.ok} chamadas ok · ❌ ${saudeIA.erros} erros` + (saudeIA.limite ? ` (${saudeIA.limite} por limite de uso)` : '') +
         (saudeIA.ultimoErro ? `\nÚltimo erro: ${saudeIA.ultimoErro} em ${saudeIA.ultimoErroEm.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : '') +
         (saudeIA.limite ? `\n⚠️ A chave do Gemini está batendo no limite de uso: parte das análises e vistorias pode estar se perdendo.` : '') +
