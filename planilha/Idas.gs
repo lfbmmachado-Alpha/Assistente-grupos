@@ -366,11 +366,11 @@ function escreverPainel(ss, P, quando) {
     .setFontFamily('Montserrat').setHorizontalAlignment('center');
   for (let i = 0; i < 3; i++) r.setRowHeight(lin + i, 26);
   lin += 4;
-  cab(['Data', 'Dia', 'Quem foi', 'Tipo', 'Entrada', 'Saída', 'Motivo / causa', 'Observação']);
+  cab(['Data', 'Dia', 'Entrada', 'Saída', 'Tipo', 'Quem foi', 'Motivo / causa', 'Observação']); // ordem casada com a largura das colunas
   r.getRange(lin - 1, PC.LISTA, 1, 2).setHorizontalAlignment('left');
   const col = (c) => ABA + '!' + c + '2:' + c;
   F(r.getRange(lin, PC.NOME), '=IF(' + C + '="", "Escolha o condomínio", IFERROR(SORT(FILTER({' +
-    ['B', 'C', 'H', 'I', 'K', 'L', 'J', 'Q'].map(col).join(', ') + '}, ' +
+    ['B', 'C', 'K', 'L', 'I', 'H', 'J', 'Q'].map(col).join(', ') + '}, ' +
     col('F') + '=' + C + ', ' + col('B') + '>=' + D + ', ' + col('B') + '<=' + A + '), 1, FALSE), "Nenhuma ida no período."))');
   const n = 200;
   r.getRange(lin, PC.NOME, n, 8).setBackground(BRANCO).setFontSize(10);
@@ -378,8 +378,8 @@ function escreverPainel(ss, P, quando) {
   r.getRange(lin, PC.FEITAS, n, 5).setHorizontalAlignment('center');
   r.getRange(lin, PC.LISTA, n, 2).setWrap(true).setFontColor('#4a5568');
   r.setConditionalFormatRules([
-    SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('Vistoria da semana').setBackground(VERDE).setFontColor('#2e6b1f').setRanges([r.getRange(lin, PC.PCT, n, 1)]).build(),
-    SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('Ida extra').setBackground(LARANJA).setFontColor('#9c4a0f').setRanges([r.getRange(lin, PC.PCT, n, 1)]).build(),
+    SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('Vistoria da semana').setBackground(VERDE).setFontColor('#2e6b1f').setRanges([r.getRange(lin, PC.BARRA, n, 1)]).build(),
+    SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('Ida extra').setBackground(LARANJA).setFontColor('#9c4a0f').setRanges([r.getRange(lin, PC.BARRA, n, 1)]).build(),
     SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=AND($B' + lin + '<>"", ISEVEN(ROW()))').setBackground('#f7f9fc').setRanges([r.getRange(lin, PC.NOME, n, 8)]).build(),
   ]);
   r.setFrozenRows(0);
@@ -403,7 +403,7 @@ function usarPortugues(ss) {
 function criarAssembleia(ss) {
   const a = ss.insertSheet(ABA_ASSEMBLEIA, 0);
   a.setHiddenGridlines(true);
-  [110, 50, 110, 125, 230, 70, 70, 75, 220].forEach((w, i) => a.setColumnWidth(i + 1, w));
+  [110, 50, 110, 145, 230, 70, 70, 75, 220].forEach((w, i) => a.setColumnWidth(i + 1, w));
 
   a.getRange('A1:I1').merge().setValue('RELATÓRIO DE VISITAS AO CONDOMÍNIO')
     .setFontSize(16).setFontWeight('bold').setFontColor('#ffffff').setBackground(AZUL).setHorizontalAlignment('center').setVerticalAlignment('middle');
