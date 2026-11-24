@@ -52,7 +52,9 @@ app.get('/api/idas/:token', async (req, res) => {
       vistorias: await painelVistorias().catch((e) => { console.error('[painel]', e.message); return null; }),
       leituras: await painelLeituras().catch((e) => { console.error('[painel]', e.message); return null; }),
     };
-    res.json({ atualizado: new Date().toISOString(), idas: await planilhaIdas(), leituras: await planilhaLeituras().catch(() => null), painel });
+    const { planilhaPendencias } = await import('./demandas.js');
+    const pendencias = await planilhaPendencias().catch((e) => { console.error('[planilha] pendências', e.message); return null; });
+    res.json({ atualizado: new Date().toISOString(), idas: await planilhaIdas(), leituras: await planilhaLeituras().catch(() => null), painel, pendencias });
   } catch (e) { res.status(500).json({ erro: e.message }); }
 });
 

@@ -304,3 +304,23 @@ export async function definirLider(pessoa, lider) {
   m[normalize(pessoa)] = lider;
   await setSetting('pendencias_lideranca', JSON.stringify(m));
 }
+
+// ---------- planilha Google: aba Pendências ----------
+export async function planilhaPendencias() {
+  const pil = (await piloto()).map(normalize);
+  const rows = (await q(`SELECT * FROM demandas WHERE status = ANY($1) OR concluida_em > now() - interval '90 days' ORDER BY aberta_em DESC`, [ABERTOS])).rows
+    .filter((d) => pil.includes('todos') || pil.includes(normalize(d.responsavel || '')));
+  const ST = { aberta: 'Aberta', encaminhada: 'Encaminhada', agendada: 'Agendada', concluida: 'Concluída', descartada: 'Descartada' };
+  return rows.map((d) => {
+    const fim = d.concluida_em ? new Date(d.concluida_em) : new Date();
+    const dias = Math.max(0, Math.floor((fim - new Date(d.aberta_em)) / 86400000));
+    const atr = ABERTOS.includes(d.status) && atrasada(d);
+    return {
+      id: d.id, condominio: d.condo_nome, responsavel: d.responsavel || '', titulo: d.titulo, detalhe: d.detalhe || '',
+      categoria: d.categoria || '', urgencia: (d.urgencia || 'normal').replace(/^./, (x) => x.toUpperCase()),
+      situacao: atr ? 'Atrasada' : ST[d.status] || d.status, autor: d.autor || '',
+      aberta: fmtH(d.aberta_em), prazo: d.prazo ? fmtH(d.prazo) : '', agendado: d.agendado_para ? fmtH(d.agendado_para) : '',
+      dias, promessa: d.promessa || '', conclusao: d.conclusao || '', concluida: d.concluida_em ? fmtH(d.concluida_em) : '',
+    };
+  });
+}

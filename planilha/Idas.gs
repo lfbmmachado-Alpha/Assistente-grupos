@@ -41,7 +41,8 @@ function planilha() {
 const ABA = 'Idas';
 const ABA_RESUMO = 'Resumo';
 const ABA_LISTAS = '_Listas';
-const ABA_SEMANA = 'Vistorias da semana'; // lista de condomínios para os menus de escolha (aba oculta)
+const ABA_SEMANA = 'Vistorias da semana';
+const ABA_PEND = 'Pendências'; // lista de condomínios para os menus de escolha (aba oculta)
 const ABA_ASSEMBLEIA = 'Assembleia';
 const ABA_LEITURAS = 'Leituras';
 const CAB = ['ID', 'Data', 'Dia', 'Semana (início)', 'Mês', 'Condomínio', 'Responsável (quadro)', 'Quem foi',
@@ -132,6 +133,7 @@ function atualizarIdas() {
   sh.getRange('A1').setNote('Atualizado em ' + quando);
 
   if (dados.leituras) escreverLeituras(ss, dados.leituras);
+  if (dados.pendencias) { try { escreverPendencias(ss, dados.pendencias); } catch (e) { console.error('pendências: ' + e.message); } }
   escreverListas(ss, linhas.map((l) => l[5]));
   const filtroPainel = escreverPainel(ss, dados.painel || {}, quando);
   if (!ss.getSheetByName(ABA_ASSEMBLEIA)) criarAssembleia(ss);
@@ -588,6 +590,7 @@ function protegerAbas(ss, filtroPainel) {
   liberar[ABA_RESUMO] = () => (filtroPainel ? [filtroPainel] : []);
   liberar[ABA_ASSEMBLEIA] = (s) => [s.getRange('B4:E6')];
   liberar[ABA_LISTAS] = () => [];
+  liberar[ABA_PEND] = () => [];
   liberar[ABA_SEMANA] = (s) => [s.getRange(SEM_LINHA_ESCOLHA, 3, 1, 2), s.getRange(SEM_LINHA_ESCOLHA, 7, 1, 2)]; // células mescladas inteiras
   Object.keys(liberar).forEach((nome) => {
     const sh = ss.getSheetByName(nome);
@@ -971,4 +974,72 @@ function escreverAbaSemana(ss) {
   });
   r.getRange(lin, 2, 1, 7).merge().setValue('Conta como vistoria a primeira ida da semana ao condomínio, de qualquer pessoa da equipe. * saída estimada. “(sem grupo)”: a IA não está no grupo do condomínio.')
     .setFontSize(8).setFontColor(SUAVE).setWrap(true);
+}
+
+// ---------------------------------------------------------------- aba Pendências
+// Fichas de pendência levantadas nos grupos: abertas, atrasadas e concluídas nos últimos 90 dias.
+function escreverPendencias(ss, P) {
+  let r = ss.getSheetByName(ABA_PEND);
+  if (!r) r = ss.insertSheet(ABA_PEND, 2);
+  const COLS = ['#', 'Condomínio', 'Responsável', 'Pendência', 'Urgência', 'Situação', 'Levantada por', 'Aberta em', 'Prazo', 'Dias', 'Alpha disse', 'Conclusão'];
+  const nc = COLS.length;
+  if (r.getFilter()) r.getFilter().remove();
+  r.getRange(1, 1, r.getMaxRows(), r.getMaxColumns()).breakApart();
+  r.clear();
+  r.clearConditionalFormatRules();
+  if (r.getMaxColumns() < nc) r.insertColumnsAfter(r.getMaxColumns(), nc - r.getMaxColumns());
+  r.setHiddenGridlines(true);
+  [50, 170, 100, 280, 85, 105, 120, 100, 100, 50, 240, 220].forEach((w, i) => r.setColumnWidth(i + 1, w));
+  r.getRange(1, 1, r.getMaxRows(), nc).setFontFamily('Roboto').setFontSize(10).setVerticalAlignment('middle').setFontColor(TEXTO);
+
+  // cabeçalho e cartões
+  r.getRange(1, 1, 1, nc).merge().setValue('Pendências levantadas nos grupos').setFontFamily('Montserrat').setFontSize(18).setFontWeight('bold')
+    .setFontColor(BRANCO).setBackground(AZUL);
+  r.getRange(2, 1, 1, nc).merge().setValue('Abertas e concluídas nos últimos 90 dias · a IA abre e acompanha cada pedido dos grupos · detalhe no WhatsApp: !pendencia número')
+    .setFontSize(9).setFontColor('#c9d3e6').setBackground(AZUL);
+  r.setRowHeight(1, 40); r.setRowHeight(2, 22);
+  const abertas = P.filter((x) => ['Aberta', 'Encaminhada', 'Agendada', 'Atrasada'].indexOf(x.situacao) >= 0);
+  const atr = P.filter((x) => x.situacao === 'Atrasada');
+  const concl = P.filter((x) => x.situacao === 'Concluída');
+  const media = concl.length ? (concl.reduce((t, x) => t + x.dias, 0) / concl.length).toFixed(1).replace('.', ',') + ' dias' : '—';
+  const cart = [['ABERTAS', abertas.length, AZUL], ['ATRASADAS', atr.length, atr.length ? RUIM : OK], ['CONCLUÍDAS (90 DIAS)', concl.length, OK], ['TEMPO MÉDIO P/ RESOLVER', media, AZUL]];
+  const posC = [[1, 3], [4, 4], [5, 7], [8, 10]];
+  cart.forEach((c, i) => {
+    const [a, b] = posC[i];
+    r.getRange(4, a, 1, b - a + 1).merge().setValue(c[0]).setFontSize(8).setFontWeight('bold').setFontColor(SUAVE);
+    r.getRange(5, a, 1, b - a + 1).merge().setValue(c[1]).setFontSize(22).setFontWeight('bold').setFontColor(c[2]).setFontFamily('Montserrat');
+    r.getRange(4, a, 2, b - a + 1).setHorizontalAlignment('center').setBackground('#f3f6fb')
+      .setBorder(true, true, true, true, null, null, LINHA, SpreadsheetApp.BorderStyle.SOLID);
+    r.getRange(4, a, 2, 1).setBorder(null, true, null, null, null, null, c[2], SpreadsheetApp.BorderStyle.SOLID_THICK);
+  });
+  r.setRowHeight(5, 38);
+
+  // tabela: atrasadas primeiro, depois abertas, depois concluídas
+  const ordem = { Atrasada: 0, Aberta: 1, Encaminhada: 2, Agendada: 3, 'Concluída': 4, Descartada: 5 };
+  const linhas = P.slice().sort((a, b) => (ordem[a.situacao] - ordem[b.situacao]) || (b.dias - a.dias))
+    .map((x) => [x.id, x.condominio, x.responsavel, x.titulo + (x.detalhe ? '\n' + x.detalhe : ''), x.urgencia, x.situacao, x.autor,
+      x.aberta, x.situacao === 'Agendada' && x.agendado ? 'agend. ' + x.agendado : x.prazo, x.dias, x.promessa, x.conclusao + (x.concluida ? ' (' + x.concluida + ')' : '')]);
+  const h = 7;
+  r.getRange(h, 1, 1, nc).setValues([COLS]).setFontWeight('bold').setFontSize(9).setFontColor(BRANCO).setBackground(AZUL).setHorizontalAlignment('center').setWrap(true);
+  r.setRowHeight(h, 30);
+  r.setFrozenRows(h);
+  if (linhas.length) {
+    r.getRange(h + 1, 1, linhas.length, nc).setNumberFormat('@').setValues(linhas.map((l) => l.map(String))).setBackground(BRANCO);
+    r.getRange(h + 1, 1, linhas.length, 1).setHorizontalAlignment('center').setFontColor(SUAVE);
+    r.getRange(h + 1, 2, linhas.length, 1).setFontWeight('bold');
+    r.getRange(h + 1, 4, linhas.length, 1).setWrap(true);
+    r.getRange(h + 1, 5, linhas.length, 6).setHorizontalAlignment('center');
+    r.getRange(h + 1, 11, linhas.length, 2).setWrap(true).setFontSize(9).setFontColor('#4a5568');
+    r.getRange(h, 1, linhas.length + 1, nc).createFilter();
+  } else {
+    r.getRange(h + 1, 1, 1, nc).merge().setValue('Nenhuma pendência registrada ainda. No WhatsApp: !pendencias analisar').setFontColor(SUAVE);
+  }
+  const n = Math.max(linhas.length, 1);
+  const sit = r.getRange(h + 1, 6, n, 1), urg = r.getRange(h + 1, 5, n, 1);
+  const regra = (rg, txt, fundo, cor) => SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo(txt).setBackground(fundo).setFontColor(cor).setBold(true).setRanges([rg]).build();
+  r.setConditionalFormatRules([
+    regra(sit, 'Atrasada', '#fdecea', RUIM), regra(sit, 'Aberta', '#fff4cc', '#7f6000'), regra(sit, 'Encaminhada', '#e8f0fe', AZUL),
+    regra(sit, 'Agendada', '#ede7f6', '#5e35b1'), regra(sit, 'Concluída', '#e6f4ea', OK), regra(sit, 'Descartada', CINZA, SUAVE),
+    regra(urg, 'Urgente', '#fdecea', RUIM), regra(urg, 'Alta', '#fff1e6', '#c25e00'), regra(urg, 'Normal', '#fffbe6', '#7f6000'), regra(urg, 'Baixa', CINZA, SUAVE),
+  ]);
 }
