@@ -5,6 +5,7 @@ import { handleWebhook } from './handler.js';
 import { initKnowledge, aprender } from './knowledge.js';
 import { initVisitas, alertaSemanal, rodarEnvios, conferenciaAutomatica } from './visitas.js';
 import { initLeituras, rodarAvisosLeituras } from './leituras.js';
+import { initDemandas, analisarPendencias, rodarPendencias } from './demandas.js';
 import { initEstudo, verificarEstudos } from './estudo.js';
 import { revisarTudo } from './pendencias.js';
 
@@ -68,6 +69,7 @@ await initDb();
 await initKnowledge();
 await initVisitas();
 await initLeituras();
+await initDemandas();
 await initEstudo();
 
 // LGPD: apaga mensagens mais antigas que RETENTION_DAYS, uma vez por dia
@@ -95,5 +97,11 @@ setInterval(() => verificarEstudos().catch((e) => console.error('[estudo]', e.me
 const revisar = () => revisarTudo().catch((e) => console.error('[pendências]', e.message));
 setTimeout(revisar, 2 * 60 * 1000);
 setInterval(revisar, 60 * 60 * 1000);
+
+// Fichas de pendência (piloto): lê os grupos a cada 30 min; relatório nos grupos COND. às 08:00 (seg–sáb)
+const fichas = () => analisarPendencias().catch((e) => console.error('[pendências]', e.message));
+setTimeout(fichas, 3 * 60 * 1000);
+setInterval(fichas, 30 * 60 * 1000);
+setInterval(() => rodarPendencias().catch((e) => console.error('[pendências]', e.message)), 60 * 1000);
 
 app.listen(config.port, () => console.log(`assistente-grupos ouvindo na porta ${config.port}`));

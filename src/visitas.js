@@ -499,7 +499,7 @@ async function getApelidos() {
 }
 
 // Casa cada condomínio da carteira com o grupo da IA na hora do relatório (grupos novos entram sozinhos)
-async function universo() {
+export async function universo() {
   const condos = await listCondos();
   const cart = (await q('SELECT * FROM carteira WHERE ativo ORDER BY id')).rows;
   definirDistintos(cart.map((r) => r.condo_nome));

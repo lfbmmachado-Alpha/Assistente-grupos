@@ -61,6 +61,7 @@ Citando um condomínio, ela foca nele — ex.: _como está o clima no Floresta?_
 !planilha — link para a planilha Google com todas as idas ([novo] troca o link)
 !custos [ontem] — consumo do Gemini por tarefa (tokens e estimativa em US$)
 !leituras — controle das leituras mensais (!leituras ajuda para os comandos)
+!pendencias — fichas de pendências por responsável (!pendencias ajuda)
 !enviar leituras Nathan [próxima semana|semana|hoje] — manda o alerta de leituras no grupo do responsável
 !vistorias reler — relê as mensagens da semana (visita que não apareceu)
 !vistorias diagnostico Nome — mostra por que um condomínio está sem vistoria
@@ -244,6 +245,59 @@ export async function handleCommand(msg, suggestionGroup) {
       if (!['teste', 'producao'].includes(m)) { await reply(`Modo atual: *${await getMode()}*. Use !modo teste ou !modo producao.`); return true; }
       await setSetting('mode', m);
       await reply(m === 'teste' ? '🧪 Modo teste: só os condomínios da lista.' : '🚀 Modo produção: todos os condomínios (exceto os ignorados).');
+      return true;
+    }
+
+    case 'pendencia':
+    case 'pendencias': {
+      const D = await import('./demandas.js');
+      const sub = normalize(args[0] || '');
+      const num = Number(String(args[1] || '').replace('#', ''));
+      if (sub === 'ajuda') {
+        await reply('📌 *Pendências — comandos*\n!pendencias — visão geral\n!pendencias Nathan — de um responsável\n!pendencia 12 — detalhe e histórico\n' +
+          '!pendencia concluir 12 [nota] · !pendencia descartar 12 · !pendencia reabrir 12\n!pendencia prazo 12 28/11 [14:00]\n' +
+          '!pendencias analisar — lê os grupos agora\n!pendencias enviar [Nome] — manda o relatório nos grupos COND.\n' +
+          '!pendencias piloto Nathan, Carlos (ou: todos) — quem entra no controle\n!pendencias lideranca Carlos = Kesse');
+        return true;
+      }
+      if (/^\d+$/.test(sub.replace('#', ''))) { await reply(await D.detalhe(Number(sub.replace('#', '')))); return true; }
+      if (['concluir', 'concluida', 'resolvida', 'descartar', 'reabrir'].includes(sub)) {
+        if (!num) { await reply(`Use: !pendencia ${sub} 12`); return true; }
+        const st = sub === 'descartar' ? 'descartada' : sub === 'reabrir' ? 'aberta' : 'concluida';
+        const d = await D.mudarStatus(num, st, args.slice(2).join(' '));
+        await reply(d ? `✅ #${num} ${d.condo_nome} — ${d.titulo}: *${st}*.` : `Não achei a pendência #${num}.`);
+        return true;
+      }
+      if (sub === 'prazo') {
+        const q2 = num ? await D.mudarPrazo(num, args.slice(2).join(' ')) : null;
+        await reply(q2 ? `📅 Prazo da #${num} agora é ${q2.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}.` : 'Use: !pendencia prazo 12 28/11 14:00');
+        return true;
+      }
+      if (sub === 'analisar' || sub === 'atualizar') {
+        await reply('🔎 Lendo os grupos dos condomínios do piloto…');
+        const r = await D.analisarPendencias();
+        await reply(`📌 ${r.condos} condomínio(s) lidos: ${r.novas} pendência(s) nova(s), ${r.atualizadas} atualizada(s). Veja: !pendencias`);
+        return true;
+      }
+      if (sub === 'enviar') {
+        const n = await D.enviarRelatorios({ so: args.slice(1).join(' ') || null });
+        await reply(n ? `📤 Relatório de pendências enviado para ${n} grupo(s).` : 'Nenhum grupo COND. encontrado para os responsáveis do piloto (ex.: COND. NATHAN com a IA dentro).');
+        return true;
+      }
+      if (sub === 'piloto') {
+        const lista = args.slice(1).join(' ').split(/[,;]| e /).map((x) => x.trim()).filter(Boolean);
+        if (lista.length) await D.definirPiloto(lista);
+        await reply(`📌 Controle de pendências ativo para: *${(await D.piloto()).join(', ')}*${lista.length ? '' : '\nPara mudar: !pendencias piloto Nathan, Carlos  (ou: todos)'}`);
+        return true;
+      }
+      if (sub === 'lideranca') {
+        const [p2, l2] = texto.split('\n')[0].replace(/^!\S+\s+\S+\s*/, '').split('=').map((x) => (x || '').trim());
+        if (!p2 || !l2) { await reply('Use: !pendencias lideranca Carlos = Kesse'); return true; }
+        await D.definirLider(p2, l2);
+        await reply(`✅ Atrasadas de ${p2} também vão para ${l2}.`);
+        return true;
+      }
+      for (const m of await D.visaoGeral(resto)) await reply(m);
       return true;
     }
 
